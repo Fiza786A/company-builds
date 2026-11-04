@@ -702,7 +702,6 @@ def _render_build_checklist(builds, checks):
     if builds.empty:
         st.info("Add a build in the 📋 Builds section first.")
         return
-    order = builds.sort_values("id", ascending=False)
     def txt(v):
         return _clean_text(v) or ""
 
@@ -710,14 +709,43 @@ def _render_build_checklist(builds, checks):
         d = _to_date(v)
         return f" · due {d:%m/%d/%Y}" if d else ""
 
+    # ── Pick a team member to see their builds, then a build to open its checklist ──
+    people = sorted({p for col in ("built_by", "qc_by") for v in builds[col] for p in _people(v)},
+                    key=lambda p: (p not in TEAM_MEMBERS, TEAM_MEMBERS.index(p) if p in TEAM_MEMBERS else 0, p))
+    ALL = "All team members"
+    who = st.selectbox("Team member", [ALL, *people], key="chk_person")
+    order = builds.sort_values(["due_date", "id"], ascending=False,
+                               key=lambda s: s.map(lambda v: v or date.min) if s.name == "due_date" else s)
+    if who != ALL:
+        built_mask = order.built_by.map(lambda v: who in _people(v))
+        qc_mask = order.qc_by.map(lambda v: who in _people(v))
+        order = order[built_mask | qc_mask]
+        mine = order.assign(Role=[" + ".join(r for r, on in (("Built", b_), ("QC", q_)) if on)
+                                  for b_, q_ in zip(built_mask[built_mask | qc_mask], qc_mask[built_mask | qc_mask])])
+        st.markdown(f"#### {who}")
+        c = st.columns(4)
+        c[0].metric("Builds", int(built_mask.sum()))
+        c[1].metric("Builds completed", int((built_mask & (builds.loc[built_mask.index, "status"] == "Completed")).sum()))
+        c[2].metric("QC'd", int(qc_mask.sum()))
+        c[3].metric("QC completed", int((qc_mask & (builds.loc[qc_mask.index, "qc_status"] == "Completed")).sum()))
+        with st.expander(f"All of {who}'s builds ({len(mine)})", expanded=False):
+            st.dataframe(pd.DataFrame({
+                "Company": mine.company_name, "Code": mine.company_code.fillna("—"), "Role": mine.Role,
+                "Due": mine.due_date.map(lambda d: f"{_to_date(d):%m/%d/%Y}" if _to_date(d) else "—"),
+                "Status": mine.status.map(lambda s: STATUS_LABEL.get(s, s or "—")),
+                "QC Status": mine.qc_status.map(lambda s: STATUS_LABEL.get(s, s) if s else "—"),
+            }), hide_index=True, width="stretch", height=min(36 * len(mine) + 40, 420))
+        if order.empty:
+            st.info(f"No builds for {who} yet.")
+            return
+
     labels = {int(r.id): txt(r.company_name) + (f" ({txt(r.company_code)})" if txt(r.company_code) else "")
               + due(r.due_date) for r in order.itertuples()}
-    build_id = st.selectbox("Company build", list(labels), format_func=labels.get, key="chk_build")
+    build_id = st.selectbox("Company build", list(labels), format_func=labels.get, key=f"chk_build_{who}")
     b = builds[builds.id == build_id].iloc[0]
     status, qc_status = txt(b.status), txt(b.qc_status)
 
-    st.markdown(f"**Built by:** {txt(b.built_by) or '—'} &nbsp;·&nbsp; **QC by:** {txt(b.qc_by) or '—'} &nbsp;·&nbsp; "
-                f"**Status:** {STATUS_LABEL.get(status, status or '—')} &nbsp;·&nbsp; "
+    st.markdown(f"**Status:** {STATUS_LABEL.get(status, status or '—')} &nbsp;·&nbsp; "
                 f"**QC status:** {STATUS_LABEL.get(qc_status, qc_status or '—')}")
     st.caption("Set Built By, QC and the statuses in the 📋 Builds section. ★ = key items. "
                "Tick N/A for items that don't apply to this client; they're left out of the counts.")
@@ -776,6 +804,11 @@ def _render_build_checklist(builds, checks):
         flash(f"Saved {len(changes)} checklist change(s) for {txt(b.company_name)}.")
         st.rerun()
 
+    with st.container(border=True):
+        n1, n2 = st.columns(2)
+        n1.markdown(f"**Built by:** {txt(b.built_by) or '—'}")
+        n2.markdown(f"**QC'd by:** {txt(b.qc_by) or '—'}")
+
     label = f"💾 Save checklist ({len(changes)})" if changes else "💾 Save checklist"
     with save_top:
         if st.button(label, type="primary", disabled=not changes, key="chk_save_top"):
@@ -804,8 +837,8 @@ def _month_options(builds):
     return opts[::-1]
 
 
-def _render_builds_dashboard(builds, pick_month):
-    """One section for the month picked in the sidebar: the numbers, progress, and what needs attention."""
+def _render_month(builds, pick_month):
+    """The month picked in the sidebar: the numbers, progress, and every build in that month."""
     today = today_local()
     current = month_start(today)
 
@@ -843,10 +876,10 @@ def _render_builds_dashboard(builds, pick_month):
     p2.progress(qc_done.sum() / qc_base if qc_base else 0.0,
                 text=f"QC completed: {int(qc_done.sum())} of {qc_base} completed builds")
 
-    # ── Still open: everything not fully done, with a note on why it needs a look ──
+    # ── Every build in the month, most urgent first, with a short note on each ──
     def note(r):
         if r.status == "Completed":
-            return "🔍 Awaiting QC"
+            return "✅ Done" if r.qc_status == "Completed" else "🔍 Awaiting QC"
         if r.due is None:
             return "📅 No due date"
         days = (r.due - today).days
@@ -856,38 +889,136 @@ def _render_builds_dashboard(builds, pick_month):
             return "🟠 Due today"
         return f"Due in {days} day{'s' if days != 1 else ''}"
 
-    still_open = g[~qc_done].copy()
-    st.markdown(f"**Still open** · {len(still_open)} build{'s' if len(still_open) != 1 else ''}")
-    if still_open.empty:
-        st.success("Every build this month is completed and QC'd. 🎉")
-        return
-    still_open["note"] = still_open.apply(note, axis=1)
-    still_open["order"] = still_open.apply(
-        lambda r: (0 if "Overdue" in r.note else 1 if r.status != "Completed" else 2,
-                   r.due or date.max), axis=1)
-    still_open = still_open.sort_values("order")
+    rows = g.copy()
+    rows["note"] = rows.apply(note, axis=1)
+    rows["order"] = rows.apply(
+        lambda r: (0 if "Overdue" in r.note else 1 if r.status != "Completed" else 2 if "Awaiting" in r.note else 3,
+                   r.due or date.max, (r.company_name or "").lower()), axis=1)
+    rows = rows.sort_values("order")
     st.dataframe(pd.DataFrame({
-        "Company": still_open.company_name,
-        "Note": still_open.note,
-        "Code": still_open.company_code.fillna("—"),
-        "Due": still_open.due.map(lambda d: f"{d:%m/%d/%Y}" if d else "—"),
-        "Status": still_open.status.map(lambda s: STATUS_LABEL.get(s, s)),
-        "Built By": still_open.built_by.fillna("—"),
-        "Assigned By": still_open.assigned_by.fillna("—"),
-    }), hide_index=True, width="stretch")
+        "Company": rows.company_name,
+        "Note": rows.note,
+        "Code": rows.company_code.fillna("—"),
+        "Due": rows.due.map(lambda d: f"{d:%m/%d/%Y}" if d else "—"),
+        "Status": rows.status.map(lambda s: STATUS_LABEL.get(s, s)),
+        "Built By": rows.built_by.fillna("—"),
+        "QC": rows.qc_by.fillna("—"),
+        "QC Status": rows.qc_status.map(lambda s: STATUS_LABEL.get(s, s) if s else "—"),
+        "Assigned By": rows.assigned_by.fillna("—"),
+    }), hide_index=True, width="stretch", height=min(36 * len(rows) + 40, 640))
+
+
+STATUS_COLORS = ["#A0A7B4", "#E8B33A", "#2E9E5B"]   # Pending, In Progress, Completed
+
+
+def _people(value):
+    """'Fiza (SF) / Harshith (NX)' -> ['Fiza', 'Harshith']"""
+    if not isinstance(value, str):
+        return []
+    return [re.sub(r"\s*\(.*?\)", "", p).strip() for p in value.split("/") if p.strip()]
+
+
+def _render_overview(builds):
+    """The main dashboard: totals for every month and the charts."""
+    import altair as alt
+
+    if builds.empty:
+        st.info("No builds yet. Add builds in the 📋 Builds section and the totals will appear here.")
+        return
+    df = builds.copy()
+    df["status"] = df.status.map(lambda v: _clean_text(v) or "Pending")
+    df["qc_status"] = df.qc_status.map(lambda v: _clean_text(v) or "")
+    df["month"] = df.due_date.map(lambda d: month_start(_to_date(d)) if _to_date(d) else None)
+
+    total = len(df)
+    done = df.status == "Completed"
+    qc_done = done & (df.qc_status == "Completed")
+    dated = df[df.month.map(lambda v: v is not None)]
+    months = sorted(dated.month.unique())
+    first = f"{months[0]:%B %Y}" if months else ""
+    this_month = int((dated.month == month_start(today_local())).sum())
+
+    st.subheader(f"All builds · {first} to date" if first else "All builds")
+    m = st.columns(6)
+    m[0].metric("Total builds", f"{total:,}")
+    m[1].metric("Completed", f"{int(done.sum()):,}")
+    m[2].metric("In progress", int((df.status == "In Progress").sum()))
+    m[3].metric("Pending", int((df.status == "Pending").sum()))
+    m[4].metric("QC completed", f"{int(qc_done.sum()):,}")
+    m[5].metric("This month", this_month, help=f"Builds due in {today_local():%B %Y}")
+    p1, p2 = st.columns(2)
+    p1.progress(done.sum() / total, text=f"Builds completed: {done.sum() / total:.0%}")
+    p2.progress(qc_done.sum() / done.sum() if done.sum() else 0.0,
+                text=f"QC completed: {qc_done.sum() / done.sum():.0%} of completed builds" if done.sum() else "QC")
+
+    if not months:
+        st.info("Add due dates to builds to see the monthly chart.")
+        return
+    order = [f"{mo:%b %Y}" for mo in months]
+
+    # ── Builds per month, split by status ──
+    st.markdown("#### Builds per month")
+    counts = dated.groupby(["month", "status"]).size().reset_index(name="Builds")
+    counts["Month"] = counts.month.map(lambda mo: f"{mo:%b %Y}")
+    counts["rank"] = counts.status.map({s: i for i, s in enumerate(BUILD_STATUSES)})
+    bars = alt.Chart(counts).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
+        x=alt.X("Month:N", sort=order, title=None, axis=alt.Axis(labelAngle=0)),
+        y=alt.Y("sum(Builds):Q", title="Builds", axis=alt.Axis(tickMinStep=1, format="d")),
+        color=alt.Color("status:N", title=None, scale=alt.Scale(domain=BUILD_STATUSES, range=STATUS_COLORS),
+                        legend=alt.Legend(orient="top")),
+        order=alt.Order("rank:Q"),
+        tooltip=["Month", alt.Tooltip("status:N", title="Status"), "Builds"])
+    totals = counts.groupby("Month", as_index=False)["Builds"].sum()
+    labels = alt.Chart(totals).mark_text(dy=-9, fontWeight="bold", fontSize=13).encode(
+        x=alt.X("Month:N", sort=order), y="Builds:Q", text="Builds:Q")
+    st.altair_chart((bars + labels).properties(height=340), width="stretch")
+
+    # ── Who built and who QC'd (a shared build counts for each person) ──
+    def per_person(col, mask):
+        names = [p for v in df.loc[mask, col] for p in _people(v)]
+        return pd.Series(names, dtype=object).value_counts().rename_axis("Person").reset_index(name="Builds")
+
+    def person_chart(data, color):
+        base = alt.Chart(data).encode(
+            y=alt.Y("Person:N", sort="-x", title=None),
+            x=alt.X("Builds:Q", title=None, axis=alt.Axis(tickMinStep=1, format="d"),
+                    scale=alt.Scale(domain=[0, int(data.Builds.max() * 1.15) + 1])),   # room for the labels
+            tooltip=["Person", "Builds"])
+        chart = base.mark_bar(color=color, cornerRadiusTopRight=3, cornerRadiusBottomRight=3) + \
+            base.mark_text(align="left", dx=4, fontWeight="bold").encode(text="Builds:Q")
+        return chart.properties(height=30 * max(len(data), 1) + 50)
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("#### Builds by team member")
+        data = per_person("built_by", done)
+        if data.empty:
+            st.caption("No completed builds with a Built By name yet.")
+        else:
+            st.altair_chart(person_chart(data, "#2F5D9A"), width="stretch")
+    with right:
+        st.markdown("#### QC by team member")
+        data = per_person("qc_by", qc_done)
+        if data.empty:
+            st.caption("No completed QC with a QC name yet.")
+        else:
+            st.altair_chart(person_chart(data, "#2E9E5B"), width="stretch")
+    undated = total - len(dated)
+    if undated:
+        st.caption(f"{undated} build(s) have no due date yet: they're in the totals but not the monthly chart.")
 
 
 @st.fragment(run_every="30s")
-def _live_builds_dashboard(pick_month):
-    """Re-reads the database and redraws the dashboard every 30 seconds."""
+def _live(render, *args):
+    """Re-reads the database and redraws the page every 30 seconds."""
     try:
         builds = load_builds()
     except Exception as e:
-        st.error("Could not refresh the dashboard. It will try again in 30 seconds.")
+        st.error("Could not refresh the data. It will try again in 30 seconds.")
         with st.expander("Error details"):
             st.code(str(e))
         return
-    _render_builds_dashboard(builds, pick_month)
+    render(builds, *args)
     st.caption(f"🟢 Live: updates automatically every 30 seconds. Last updated {now_local():%I:%M:%S %p} IST.")
 
 
@@ -1011,9 +1142,12 @@ def render_landing_page():
 """, height=570)
 
 
-SECTIONS = {"📊 Dashboard": "Live totals and charts",
-            "📋 Builds": "Tracker for every company build",
-            "✅ QC": "Implementation checklist per build"}
+SECTIONS = {"📊 Dashboard": "Build counts and charts, all months",
+            "📅 Monthly": "Every build in the month you pick",
+            "📋 Builds": "Add and edit builds",
+            "✅ QC": "Checklist by team member and build"}
+MONTH_VIEWS = ("📅 Monthly", "📋 Builds")      # sections that use the sidebar Month picker
+LIVE_VIEWS = ("📊 Dashboard", "📅 Monthly")    # sections that refresh themselves every 30 seconds
 
 
 def render_builds_page():
@@ -1046,17 +1180,17 @@ def render_builds_page():
         view = st.radio("Sections", list(SECTIONS), captions=list(SECTIONS.values()),
                         label_visibility="collapsed", key="builds_view")
         pick_month = None
-        if view != "✅ QC":
+        if view in MONTH_VIEWS:
             st.divider()
             opts = _month_options(builds)
             current = month_start(today_local())
-            # One month choice shared by the Dashboard and the Builds table.
+            # One month choice shared by the Monthly page and the Builds table.
             if st.session_state.get("month") not in opts:
                 st.session_state["month"] = current if current in opts else opts[0]
             pick_month = st.selectbox("Month", opts, key="month", format_func=lambda o: f"{o:%B %Y}")
         st.divider()
-        if view == "📊 Dashboard":
-            st.caption("🟢 The dashboard refreshes on its own every 30 seconds.")
+        if view in LIVE_VIEWS:
+            st.caption("🟢 This page refreshes on its own every 30 seconds.")
         else:
             if st.button("🔄 Refresh data", key="builds_refresh", width="stretch",
                          help="Load the latest changes saved by others. Save your own edits first, "
@@ -1068,7 +1202,9 @@ def render_builds_page():
     st.title(view)
     st.caption(SECTIONS[view])
     if view == "📊 Dashboard":
-        _live_builds_dashboard(pick_month)
+        _live(_render_overview)
+    elif view == "📅 Monthly":
+        _live(_render_month, pick_month)
     elif view == "📋 Builds":
         _render_build_tracker(builds, pick_month)
     else:
