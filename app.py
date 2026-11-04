@@ -165,6 +165,9 @@ def sqlite_conn():
     conn.execute("""CREATE TABLE IF NOT EXISTS build_checks (
         build_id INTEGER NOT NULL, item_id TEXT NOT NULL, built INTEGER DEFAULT 0, qc INTEGER DEFAULT 0,
         na INTEGER DEFAULT 0, PRIMARY KEY(build_id, item_id))""")
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(build_checks)")]
+    if "comments" not in cols:
+        conn.execute("ALTER TABLE build_checks ADD COLUMN comments TEXT")
     conn.commit()
     return conn
 
@@ -192,7 +195,7 @@ PAYROLL_LEADS = ["Chelsi", "Dakota", "Jessikah", "Kristin", "Lauren", "Macy", "T
 
 BUILD_COLS = ["id", "company_name", "company_code", "hierarchy", "status", "completion_date",
               "due_date", "built_by", "assigned_by", "qc_by", "qc_status"]
-CHECK_COLS = ["build_id", "item_id", "built", "qc", "na"]
+CHECK_COLS = ["build_id", "item_id", "built", "qc", "na", "comments"]
 BUILD_FIELDS = {  # column shown in the tracker -> database field
     "Company Name": "company_name", "Company Code": "company_code", "Hierarchy": "hierarchy",
     "Status": "status", "Date of Completion": "completion_date", "Due Date": "due_date",
@@ -483,6 +486,9 @@ def load_builds():
     for col in ("company_name", "company_code", "hierarchy", "status", "built_by", "assigned_by", "qc_by", "qc_status"):
         df[col] = df[col].map(_clean_text).astype(object)
     df["company_code"] = df["company_code"].map(lambda v: v.upper() if isinstance(v, str) else None).astype(object)
+    # A build (or its QC) with no status yet counts as Pending.
+    for col in ("status", "qc_status"):
+        df[col] = df[col].map(lambda v: v if v in BUILD_STATUSES else "Pending").astype(object)
     for col in PROPER_CASE_FIELDS:
         df[col] = df[col].map(lambda v, p=col in PERSON_FIELDS: proper_case(v, person=p)
                               if isinstance(v, str) else None).astype(object)
@@ -490,9 +496,19 @@ def load_builds():
     return df
 
 
+CHECK_COMMENTS = {"enabled": True}   # turns off if the database has no comments column yet
+
+
 def load_build_checks():
     if USE_SUPABASE:
-        df = pd.DataFrame(_fetch_all("build_checks", ",".join(CHECK_COLS)), columns=CHECK_COLS)
+        try:
+            df = pd.DataFrame(_fetch_all("build_checks", ",".join(CHECK_COLS)), columns=CHECK_COLS)
+        except Exception:
+            # Older database without the comments column: still show the checklist, without comments.
+            cols = [c for c in CHECK_COLS if c != "comments"]
+            df = pd.DataFrame(_fetch_all("build_checks", ",".join(cols)), columns=cols)
+            df["comments"] = None
+            CHECK_COMMENTS["enabled"] = False
     else:
         conn = sqlite_conn()
         try:
@@ -501,7 +517,28 @@ def load_build_checks():
             conn.close()
     for col in ("built", "qc", "na"):
         df[col] = df[col].fillna(False).astype(bool)
+    df["comments"] = df["comments"].map(_clean_text).astype(object)
     return df
+
+
+def delete_builds(ids):
+    """Removes builds and their checklist ticks."""
+    ids = [int(i) for i in ids]
+    if not ids:
+        return
+    if USE_SUPABASE:
+        sb = get_supabase()
+        sb.table("build_checks").delete().in_("build_id", ids).execute()
+        res = sb.table("builds").delete().in_("id", ids).execute()
+        if not res.data:
+            raise RuntimeError("The database did not allow the delete. Run supabase_update_nov.sql in Supabase "
+                               "to turn on deleting.")
+        return
+    conn = sqlite_conn()
+    marks = ",".join("?" * len(ids))
+    conn.execute(f"DELETE FROM build_checks WHERE build_id IN ({marks})", ids)
+    conn.execute(f"DELETE FROM builds WHERE id IN ({marks})", ids)
+    conn.commit(); conn.close()
 
 
 def _db_value(v):
@@ -535,11 +572,15 @@ def save_build_checks(rows):
     if not rows:
         return
     if USE_SUPABASE:
+        if not CHECK_COMMENTS["enabled"]:
+            rows = [{k: v for k, v in r.items() if k != "comments"} for r in rows]
         get_supabase().table("build_checks").upsert(rows, on_conflict="build_id,item_id").execute()
         return
     conn = sqlite_conn()
-    conn.executemany("""INSERT INTO build_checks(build_id,item_id,built,qc,na) VALUES(:build_id,:item_id,:built,:qc,:na)
-        ON CONFLICT(build_id,item_id) DO UPDATE SET built=excluded.built, qc=excluded.qc, na=excluded.na""", rows)
+    conn.executemany("""INSERT INTO build_checks(build_id,item_id,built,qc,na,comments)
+        VALUES(:build_id,:item_id,:built,:qc,:na,:comments)
+        ON CONFLICT(build_id,item_id) DO UPDATE SET built=excluded.built, qc=excluded.qc, na=excluded.na,
+        comments=excluded.comments""", rows)
     conn.commit(); conn.close()
 
 
@@ -607,23 +648,22 @@ def export_builds_excel(table, label):
     return buf.getvalue()
 
 
-def _render_build_tracker(builds, choice):
-    with st.container(border=True):
-        st.markdown("**📌 Important pointers**")
-        st.markdown(BUILD_POINTERS)
-
-    # The month is picked in the sidebar. Builds with no due date show under the current month.
+def _month_frame(builds, choice):
+    """Builds due in the chosen month. Builds with no due date show under the current month."""
     current = month_start(today_local())
     start, end = choice, month_end(choice)
     in_month = builds.due_date.map(lambda d: d is not None and start <= d <= end)
     no_due = builds.due_date.map(lambda d: d is None) & (choice == current)
-    frame, label = builds[in_month | no_due], f"{choice:%B %Y}"
+    return builds[in_month | no_due]
+
+
+def _builds_editor(builds, frame, key, label):
+    """Editable builds table: click a cell to edit, add a row at the bottom, or select rows and delete them.
+    Edits and new rows save automatically; deleting asks for confirmation first."""
     frame = frame.sort_values(["due_date", "company_name"], key=lambda s: s.map(
         lambda v: (v is None, v) if not isinstance(v, str) else (False, v.lower())))
-
-    st.markdown(f"#### {choice:%B %Y} Company Builds")
     st.caption("Click a cell to edit; changes save automatically. Add a build in the empty row at the bottom, "
-               "starting with the Company Name. Builds can't be deleted here.")
+               "starting with the Company Name. To delete, tick the box at the left of a row and click 🗑️.")
     table = _builds_table(frame)
 
     def with_extras(base, *cols):
@@ -636,7 +676,8 @@ def _render_build_tracker(builds, choice):
     # The key changes after every save so the table reloads fresh from the database.
     version = st.session_state.get("builds_editor_version", 0)
     edited = st.data_editor(
-        table, key=f"builds_editor_{choice}_{version}", hide_index=True, width="stretch", num_rows="add",
+        table, key=f"builds_editor_{key}_{version}", hide_index=True, width="stretch", num_rows="dynamic",
+        height=min(35 * len(table) + 75, 700),
         column_config={
             "id": None,
             "Company Name": st.column_config.TextColumn("Company Name", width=220, required=True),
@@ -676,6 +717,28 @@ def _render_build_tracker(builds, choice):
 
     for msg in dict.fromkeys(problems):
         st.warning(msg + " Your other edits will save once it has one.")
+
+    # Deleting: rows removed in the table are only deleted from the database after confirming.
+    kept = {int(i) for i in edited["id"] if i is not None and not pd.isna(i)}
+    removed = [rid for rid in originals if rid not in kept]
+    if removed:
+        names = ", ".join(str(originals[rid]["Company Name"]) for rid in removed[:5]) + ("…" if len(removed) > 5 else "")
+        st.error(f"Delete {len(removed)} build{'s' if len(removed) != 1 else ''}: **{names}**? "
+                 "This also removes their QC checklist and can't be undone.")
+        d1, d2, _ = st.columns([1, 1, 3])
+        if d1.button("🗑️ Yes, delete", type="primary", key=f"del_yes_{key}_{version}"):
+            try:
+                delete_builds(removed)
+                st.session_state["_toast"] = f"🗑️ Deleted {len(removed)} build{'s' if len(removed) != 1 else ''}"
+            except Exception as e:
+                st.session_state["_flash_error"] = str(e)
+            st.session_state["builds_editor_version"] = version + 1
+            st.rerun()
+        if d2.button("Cancel", key=f"del_no_{key}_{version}"):
+            st.session_state["builds_editor_version"] = version + 1
+            st.rerun()
+        return
+
     # Auto-save: as soon as an edit is made (and every row has a Company Name), write it to the database.
     if (inserts or updates) and not problems:
         today = today_local()
@@ -695,13 +758,21 @@ def _render_build_tracker(builds, choice):
     st.download_button(f"📥 Download Excel · {label}", data=export_builds_excel(table, label),
                        file_name=f"Company_Builds_{label.replace(' ', '_')}.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                       key="builds_download")
+                       key=f"builds_download_{key}")
+
+
+SHOW_OPTIONS = {
+    "Everything": "every checklist item",
+    "Still to build": "only items not yet ticked in the Built column",
+    "Still to QC": "only items not yet ticked in the QC column",
+}
 
 
 def _render_build_checklist(builds, checks):
     if builds.empty:
-        st.info("Add a build in the 📋 Builds section first.")
+        st.info("Add a build in the 📅 Monthly Builds section first.")
         return
+
     def txt(v):
         return _clean_text(v) or ""
 
@@ -709,55 +780,45 @@ def _render_build_checklist(builds, checks):
         d = _to_date(v)
         return f" · due {d:%m/%d/%Y}" if d else ""
 
-    # ── Pick a team member to see their builds, then a build to open its checklist ──
-    people = sorted({p for col in ("built_by", "qc_by") for v in builds[col] for p in _people(v)},
-                    key=lambda p: (p not in TEAM_MEMBERS, TEAM_MEMBERS.index(p) if p in TEAM_MEMBERS else 0, p))
+    # ── Pick a team member to open their page, then a build to open its checklist ──
+    # The whole CoE team is listed (even with no builds yet), plus past builders such as Jyoti and Supriya.
+    past = sorted({p for v in builds.built_by for p in _people(v)} - set(TEAM_MEMBERS))
     ALL = "All team members"
-    who = st.selectbox("Team member", [ALL, *people], key="chk_person")
+    who = st.selectbox("Team member", [ALL, *TEAM_MEMBERS, *past], key="chk_person")
     order = builds.sort_values(["due_date", "id"], ascending=False,
                                key=lambda s: s.map(lambda v: v or date.min) if s.name == "due_date" else s)
     if who != ALL:
         built_mask = order.built_by.map(lambda v: who in _people(v))
         qc_mask = order.qc_by.map(lambda v: who in _people(v))
         order = order[built_mask | qc_mask]
-        mine = order.assign(Role=[" + ".join(r for r, on in (("Built", b_), ("QC", q_)) if on)
-                                  for b_, q_ in zip(built_mask[built_mask | qc_mask], qc_mask[built_mask | qc_mask])])
         st.markdown(f"#### {who}")
-        c = st.columns(4)
-        c[0].metric("Builds", int(built_mask.sum()))
-        c[1].metric("Builds completed", int((built_mask & (builds.loc[built_mask.index, "status"] == "Completed")).sum()))
-        c[2].metric("QC'd", int(qc_mask.sum()))
-        c[3].metric("QC completed", int((qc_mask & (builds.loc[qc_mask.index, "qc_status"] == "Completed")).sum()))
-        with st.expander(f"All of {who}'s builds ({len(mine)})", expanded=False):
-            st.dataframe(pd.DataFrame({
-                "Company": mine.company_name, "Code": mine.company_code.fillna("—"), "Role": mine.Role,
-                "Due": mine.due_date.map(lambda d: f"{_to_date(d):%m/%d/%Y}" if _to_date(d) else "—"),
-                "Status": mine.status.map(lambda s: STATUS_LABEL.get(s, s or "—")),
-                "QC Status": mine.qc_status.map(lambda s: STATUS_LABEL.get(s, s) if s else "—"),
-            }), hide_index=True, width="stretch", height=min(36 * len(mine) + 40, 420))
+        c = st.columns(3)
+        c[0].metric("Builds", int(built_mask.sum()), help="Builds where they're the Built By")
+        c[1].metric("Builds completed", int((built_mask & (order.reindex(built_mask.index).status == "Completed")).sum()))
+        c[2].metric("QC'd", int((qc_mask & (order.reindex(qc_mask.index).qc_status == "Completed")).sum()),
+                    help="Builds they QC'd where the QC Status is Completed")
         if order.empty:
-            st.info(f"No builds for {who} yet.")
+            st.info(f"{who} has no builds yet.")
             return
+        with st.expander(f"All of {who}'s builds ({len(order)}) · click to view and edit", expanded=False):
+            _builds_editor(builds, order, key=f"person_{who}", label=who)
 
     labels = {int(r.id): txt(r.company_name) + (f" ({txt(r.company_code)})" if txt(r.company_code) else "")
               + due(r.due_date) for r in order.itertuples()}
     build_id = st.selectbox("Company build", list(labels), format_func=labels.get, key=f"chk_build_{who}")
     b = builds[builds.id == build_id].iloc[0]
-    status, qc_status = txt(b.status), txt(b.qc_status)
+    status, qc_status = txt(b.status) or "Pending", txt(b.qc_status) or "Pending"
 
-    st.markdown(f"**Status:** {STATUS_LABEL.get(status, status or '—')} &nbsp;·&nbsp; "
-                f"**QC status:** {STATUS_LABEL.get(qc_status, qc_status or '—')}")
-    st.caption("Set Built By, QC and the statuses in the 📋 Builds section. ★ = key items. "
-               "Tick N/A for items that don't apply to this client; they're left out of the counts.")
+    st.markdown(f"**Status:** {STATUS_LABEL.get(status, status)} &nbsp;·&nbsp; "
+                f"**QC status:** {STATUS_LABEL.get(qc_status, qc_status)}")
+    st.caption("★ = key items. Tick N/A for items that don't apply to this client. "
+               "Built By, QC By and the statuses can be changed at the bottom.")
 
-    built, qc, applicable = _progress(checks, build_id)
-    p1, p2 = st.columns(2)
-    p1.progress(built / applicable if applicable else 0.0, text=f"Built: {built} of {applicable}")
-    p2.progress(qc / applicable if applicable else 0.0, text=f"QC: {qc} of {applicable}")
-
-    show = st.radio("Show", ["All items", "Not built yet", "Not QC'd yet"], horizontal=True, key="chk_show")
+    show = st.radio("Show", list(SHOW_OPTIONS), horizontal=True, key="chk_show",
+                    captions=None, help="Everything: the full checklist. Still to build: hides items already "
+                    "ticked as Built. Still to QC: hides items already ticked as QC. Items marked N/A are hidden "
+                    "in the last two. If nothing is ticked yet, all three look the same.")
     saved = {r.item_id: r for r in checks[checks.build_id == build_id].itertuples()}
-    save_top = st.container()
 
     changes = {}
     for si, (section, note, _groups) in enumerate(CHECKLIST, 1):
@@ -767,14 +828,14 @@ def _render_build_checklist(builds, checks):
             s = saved.get(it["id"])
             rows.append({"item_id": it["id"], "Area": it["sub"], "Item": ("★ " if it["key"] else "") + it["item"],
                          "Built": bool(s.built) if s else False, "QC": bool(s.qc) if s else False,
-                         "N/A": bool(s.na) if s else False})
+                         "Comments": (txt(s.comments) if s else ""), "N/A": bool(s.na) if s else False})
         df = pd.DataFrame(rows)
         sec_app = int((~df["N/A"]).sum())
         sec_built = int((df.Built & ~df["N/A"]).sum())
         sec_qc = int((df.QC & ~df["N/A"]).sum())
-        if show == "Not built yet":
+        if show == "Still to build":
             df = df[~df.Built & ~df["N/A"]]
-        elif show == "Not QC'd yet":
+        elif show == "Still to QC":
             df = df[~df.QC & ~df["N/A"]]
         if df.empty:
             continue
@@ -786,40 +847,60 @@ def _render_build_checklist(builds, checks):
                 df.reset_index(drop=True), key=f"chk_{build_id}_{si}_{show}", hide_index=True, width="stretch",
                 num_rows="fixed", disabled=["Area", "Item"],
                 column_config={"item_id": None,
-                               "Area": st.column_config.TextColumn("Area", width=230),
-                               "Item": st.column_config.TextColumn("Item", width=640),
-                               "Built": st.column_config.CheckboxColumn("Built", width=70),
-                               "QC": st.column_config.CheckboxColumn("QC", width=70),
-                               "N/A": st.column_config.CheckboxColumn("N/A", width=70)})
+                               "Area": st.column_config.TextColumn("Area", width=200),
+                               "Item": st.column_config.TextColumn("Item", width=520),
+                               "Built": st.column_config.CheckboxColumn("Built", width=60),
+                               "QC": st.column_config.CheckboxColumn("QC", width=60),
+                               "Comments": st.column_config.TextColumn("Comments ✏️", width=260,
+                                                                       help="Click to add a note for this item"),
+                               "N/A": st.column_config.CheckboxColumn("N/A", width=55)})
             base = df.reset_index(drop=True)
             for i in range(len(ed)):
-                new = (bool(ed.at[i, "Built"]), bool(ed.at[i, "QC"]), bool(ed.at[i, "N/A"]))
-                old = (bool(base.at[i, "Built"]), bool(base.at[i, "QC"]), bool(base.at[i, "N/A"]))
+                new = (bool(ed.at[i, "Built"]), bool(ed.at[i, "QC"]), bool(ed.at[i, "N/A"]),
+                       txt(ed.at[i, "Comments"]))
+                old = (bool(base.at[i, "Built"]), bool(base.at[i, "QC"]), bool(base.at[i, "N/A"]),
+                       txt(base.at[i, "Comments"]))
                 if new != old:
                     changes[base.at[i, "item_id"]] = new
 
-    def save():
-        save_build_checks([{"build_id": int(build_id), "item_id": k, "built": v[0], "qc": v[1], "na": v[2]}
-                           for k, v in changes.items()])
-        flash(f"Saved {len(changes)} checklist change(s) for {txt(b.company_name)}.")
-        st.rerun()
+    # ── Who built it and who QC'd it, editable here ──
+    team = [*TEAM_MEMBERS, *sorted({v for c in ("built_by", "qc_by") for v in builds[c]
+                                    if isinstance(v, str) and v not in TEAM_MEMBERS})]
+    NONE = "—"
+
+    def pick(col, label, options, current, k):
+        opts = [NONE, *options] + ([current] if current and current not in options else [])
+        return col.selectbox(label, opts, index=opts.index(current) if current else 0, key=f"{k}_{build_id}")
 
     with st.container(border=True):
-        n1, n2 = st.columns(2)
-        n1.markdown(f"**Built by:** {txt(b.built_by) or '—'}")
-        n2.markdown(f"**QC'd by:** {txt(b.qc_by) or '—'}")
+        n1, n2, n3, n4 = st.columns(4)
+        new_fields = {
+            "built_by": pick(n1, "Built by", team, txt(b.built_by), "chk_bb"),
+            "status": pick(n2, "Status", BUILD_STATUSES, status, "chk_st"),
+            "qc_by": pick(n3, "QC'd by", team, txt(b.qc_by), "chk_qb"),
+            "qc_status": pick(n4, "QC status", BUILD_STATUSES, qc_status, "chk_qs"),
+        }
+    old_fields = {"built_by": txt(b.built_by), "status": status, "qc_by": txt(b.qc_by), "qc_status": qc_status}
+    field_changes = {k: (None if v == NONE else v) for k, v in new_fields.items()
+                     if (v if v != NONE else "") != old_fields[k]}
 
-    label = f"💾 Save checklist ({len(changes)})" if changes else "💾 Save checklist"
-    with save_top:
-        if st.button(label, type="primary", disabled=not changes, key="chk_save_top"):
-            save()
-    if st.button(label, type="primary", disabled=not changes, key="chk_save_bottom"):
-        save()
+    n_changes = len(changes) + len(field_changes)
+    label = f"💾 Save ({n_changes} change{'s' if n_changes != 1 else ''})" if n_changes else "💾 Save"
+    if st.button(label, type="primary", disabled=not n_changes, key="chk_save"):
+        save_build_checks([{"build_id": int(build_id), "item_id": k, "built": v[0], "qc": v[1], "na": v[2],
+                            "comments": v[3] or None} for k, v in changes.items()])
+        if field_changes:
+            if field_changes.get("status") == "Completed" and not _to_date(b.completion_date):
+                field_changes["completion_date"] = today_local()
+            update_build(build_id, field_changes)
+        flash(f"Saved {n_changes} change{'s' if n_changes != 1 else ''} for {txt(b.company_name)}.")
+        st.rerun()
 
+    built, qc, applicable = _progress(checks, build_id)
     if applicable and built == applicable and status != "Completed":
-        st.info("Every checklist item is built. Set **Status** to Completed in the 📋 Builds section.")
+        st.info("Every checklist item is built. Set **Status** to Completed above and save.")
     if applicable and qc == applicable and qc_status != "Completed":
-        st.info("Every checklist item is QC'd. Set **QC Status** to Completed in the 📋 Builds section.")
+        st.info("Every checklist item is QC'd. Set **QC status** to Completed above and save.")
 
 
 
@@ -852,60 +933,35 @@ def _render_month(builds, pick_month):
     no_due = df.due.map(lambda d: d is None) & (pick_month == current)
     g = df[in_month | no_due]
 
-    st.subheader(f"{pick_month:%B %Y} builds")
+    st.subheader(f"{pick_month:%B %Y} Company Builds")
     if g.empty:
-        st.info(f"No builds for {pick_month:%B %Y} yet. Add them in the 📋 Builds section.")
-        return
+        st.info(f"No builds for {pick_month:%B %Y} yet. Add them in the table below.")
+    else:
+        total = len(g)
+        done = g.status == "Completed"
+        qc_done = done & (g.qc_status == "Completed")
+        overdue = (~done) & g.due.map(lambda d: d is not None and d < today)
 
-    total = len(g)
-    done = g.status == "Completed"
-    qc_done = done & (g.qc_status == "Completed")
-    overdue = (~done) & g.due.map(lambda d: d is not None and d < today)
+        m = st.columns(6)
+        m[0].metric("Builds", total, help="Builds due this month, plus any without a due date")
+        m[1].metric("Completed", int(done.sum()))
+        m[2].metric("In progress", int((g.status == "In Progress").sum()))
+        m[3].metric("Pending", int((g.status == "Pending").sum()))
+        m[4].metric("Awaiting QC", int((done & ~qc_done).sum()), help="Built, but QC not completed yet")
+        m[5].metric("Overdue", int(overdue.sum()), help="Past the due date and not completed")
 
-    m = st.columns(6)
-    m[0].metric("Builds", total, help="Builds due this month, plus any without a due date")
-    m[1].metric("Completed", int(done.sum()))
-    m[2].metric("In progress", int((g.status == "In Progress").sum()))
-    m[3].metric("Pending", int((g.status == "Pending").sum()))
-    m[4].metric("Awaiting QC", int((done & ~qc_done).sum()), help="Built, but QC not completed yet")
-    m[5].metric("Overdue", int(overdue.sum()), help="Past the due date and not completed")
+        p1, p2 = st.columns(2)
+        p1.progress(done.sum() / total,
+                    text=f"Builds completed: {int(done.sum())} of {total} ({done.sum() / total:.0%})")
+        qc_base = int(done.sum())
+        p2.progress(qc_done.sum() / qc_base if qc_base else 0.0,
+                    text=f"QC completed: {int(qc_done.sum())} of {qc_base} completed builds")
 
-    p1, p2 = st.columns(2)
-    p1.progress(done.sum() / total, text=f"Builds completed: {int(done.sum())} of {total} ({done.sum() / total:.0%})")
-    qc_base = int(done.sum())
-    p2.progress(qc_done.sum() / qc_base if qc_base else 0.0,
-                text=f"QC completed: {int(qc_done.sum())} of {qc_base} completed builds")
-
-    # ── Every build in the month, most urgent first, with a short note on each ──
-    def note(r):
-        if r.status == "Completed":
-            return "✅ Done" if r.qc_status == "Completed" else "🔍 Awaiting QC"
-        if r.due is None:
-            return "📅 No due date"
-        days = (r.due - today).days
-        if days < 0:
-            return f"🔴 Overdue by {-days} day{'s' if days != -1 else ''}"
-        if days == 0:
-            return "🟠 Due today"
-        return f"Due in {days} day{'s' if days != 1 else ''}"
-
-    rows = g.copy()
-    rows["note"] = rows.apply(note, axis=1)
-    rows["order"] = rows.apply(
-        lambda r: (0 if "Overdue" in r.note else 1 if r.status != "Completed" else 2 if "Awaiting" in r.note else 3,
-                   r.due or date.max, (r.company_name or "").lower()), axis=1)
-    rows = rows.sort_values("order")
-    st.dataframe(pd.DataFrame({
-        "Company": rows.company_name,
-        "Note": rows.note,
-        "Code": rows.company_code.fillna("—"),
-        "Due": rows.due.map(lambda d: f"{d:%m/%d/%Y}" if d else "—"),
-        "Status": rows.status.map(lambda s: STATUS_LABEL.get(s, s)),
-        "Built By": rows.built_by.fillna("—"),
-        "QC": rows.qc_by.fillna("—"),
-        "QC Status": rows.qc_status.map(lambda s: STATUS_LABEL.get(s, s) if s else "—"),
-        "Assigned By": rows.assigned_by.fillna("—"),
-    }), hide_index=True, width="stretch", height=min(36 * len(rows) + 40, 640))
+    # ── Every build in the month: edit, add or delete right here ──
+    with st.container(border=True):
+        st.markdown("**📌 Important pointers**")
+        st.markdown(BUILD_POINTERS)
+    _builds_editor(builds, _month_frame(builds, pick_month), key=f"month_{pick_month}", label=f"{pick_month:%B %Y}")
 
 
 STATUS_COLORS = ["#A0A7B4", "#E8B33A", "#2E9E5B"]   # Pending, In Progress, Completed
@@ -923,7 +979,7 @@ def _render_overview(builds):
     import altair as alt
 
     if builds.empty:
-        st.info("No builds yet. Add builds in the 📋 Builds section and the totals will appear here.")
+        st.info("No builds yet. Add builds in the 📅 Monthly Builds section and the totals will appear here.")
         return
     df = builds.copy()
     df["status"] = df.status.map(lambda v: _clean_text(v) or "Pending")
@@ -988,21 +1044,12 @@ def _render_overview(builds):
             base.mark_text(align="left", dx=4, fontWeight="bold").encode(text="Builds:Q")
         return chart.properties(height=30 * max(len(data), 1) + 50)
 
-    left, right = st.columns(2)
-    with left:
-        st.markdown("#### Builds by team member")
-        data = per_person("built_by", done)
-        if data.empty:
-            st.caption("No completed builds with a Built By name yet.")
-        else:
-            st.altair_chart(person_chart(data, "#2F5D9A"), width="stretch")
-    with right:
-        st.markdown("#### QC by team member")
-        data = per_person("qc_by", qc_done)
-        if data.empty:
-            st.caption("No completed QC with a QC name yet.")
-        else:
-            st.altair_chart(person_chart(data, "#2E9E5B"), width="stretch")
+    st.markdown("#### Builds by team member")
+    data = per_person("built_by", done)
+    if data.empty:
+        st.caption("No completed builds with a Built By name yet.")
+    else:
+        st.altair_chart(person_chart(data, "#2F5D9A"), width="stretch")
     undated = total - len(dated)
     if undated:
         st.caption(f"{undated} build(s) have no due date yet: they're in the totals but not the monthly chart.")
@@ -1143,11 +1190,10 @@ def render_landing_page():
 
 
 SECTIONS = {"📊 Dashboard": "Build counts and charts, all months",
-            "📅 Monthly": "Every build in the month you pick",
-            "📋 Builds": "Add and edit builds",
+            "📅 Monthly Builds": "View, add, edit and delete builds by month",
             "✅ QC": "Checklist by team member and build"}
-MONTH_VIEWS = ("📅 Monthly", "📋 Builds")      # sections that use the sidebar Month picker
-LIVE_VIEWS = ("📊 Dashboard", "📅 Monthly")    # sections that refresh themselves every 30 seconds
+MONTH_VIEWS = ("📅 Monthly Builds",)    # sections that use the sidebar Month picker
+LIVE_VIEWS = ("📊 Dashboard",)          # sections that refresh themselves every 30 seconds
 
 
 def render_builds_page():
@@ -1165,6 +1211,8 @@ def render_builds_page():
         st.success(st.session_state.pop("_flash"))
     if "_toast" in st.session_state:
         st.toast(st.session_state.pop("_toast"))
+    if "_flash_error" in st.session_state:
+        st.error(st.session_state.pop("_flash_error"))
 
     with st.sidebar:
         st.markdown("""<style>
@@ -1203,10 +1251,8 @@ def render_builds_page():
     st.caption(SECTIONS[view])
     if view == "📊 Dashboard":
         _live(_render_overview)
-    elif view == "📅 Monthly":
-        _live(_render_month, pick_month)
-    elif view == "📋 Builds":
-        _render_build_tracker(builds, pick_month)
+    elif view == "📅 Monthly Builds":
+        _render_month(builds, pick_month)
     else:
         _render_build_checklist(builds, checks)
 
