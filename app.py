@@ -411,6 +411,7 @@ def load_builds():
         df[col] = df[col].map(_to_date).astype(object)
     for col in ("company_name", "company_code", "hierarchy", "status", "built_by", "assigned_by", "qc_by", "qc_status"):
         df[col] = df[col].map(_clean_text).astype(object)
+    df["company_code"] = df["company_code"].map(lambda v: v.upper() if isinstance(v, str) else None).astype(object)
     df["id"] = df["id"].astype(int) if not df.empty else df["id"]
     return df
 
@@ -475,17 +476,15 @@ def _progress(checks, build_id):
     return int((c.built & ~c.na).sum()), int((c.qc & ~c.na).sum()), applicable
 
 
-def _builds_table(frame, checks):
+def _builds_table(frame):
     rows = []
     for r in frame.itertuples():
-        built, qc, applicable = _progress(checks, r.id)
         rows.append({
             "id": r.id, "Company Name": r.company_name, "Company Code": r.company_code, "Hierarchy": r.hierarchy,
             "Status": r.status, "Date of Completion": r.completion_date, "Due Date": r.due_date,
             "Built By": r.built_by, "Assigned By": r.assigned_by, "QC": r.qc_by, "QC Status": r.qc_status,
-            "Checklist": f"{built}/{applicable} built, {qc}/{applicable} QC" if built or qc else "Not started",
         })
-    cols = ["id", *BUILD_FIELDS, "Checklist"]
+    cols = ["id", *BUILD_FIELDS]
     table = pd.DataFrame(rows, columns=cols)
     for col in ("Date of Completion", "Due Date"):
         table[col] = table[col].astype(object)
@@ -495,7 +494,10 @@ def _builds_table(frame, checks):
 def _norm(field, value):
     if field in ("completion_date", "due_date"):
         return _to_date(value)
-    return _clean_text(value)
+    text = _clean_text(value)
+    if field == "company_code" and text:
+        return text.upper()          # company codes are always upper case, e.g. 1kx -> 1KX
+    return text
 
 
 def export_builds_excel(table, label):
@@ -508,7 +510,7 @@ def export_builds_excel(table, label):
     ws.append([f"Company Builds – {label}"])
     ws["A1"].font = Font(bold=True, size=14)
     ws.append([])
-    headers = [*BUILD_FIELDS, "Checklist"]
+    headers = [*BUILD_FIELDS]
     ws.append(headers)
     for c in ws[3]:
         c.font = Font(bold=True)
@@ -529,42 +531,29 @@ def export_builds_excel(table, label):
     return buf.getvalue()
 
 
-def _render_build_tracker(builds, checks):
+def _render_build_tracker(builds, choice):
     with st.container(border=True):
         st.markdown("**📌 Important pointers**")
         st.markdown(BUILD_POINTERS)
 
+    # The month is picked in the sidebar. Builds with no due date show under the current month.
     current = month_start(today_local())
-    months = {month_start(d) for d in builds.due_date if d} | {current, add_months(current, 1)}
-    options = ["open"] + sorted(months, reverse=True)
-    choice = st.selectbox("Show", options, index=options.index(current), key="builds_month",
-                          format_func=lambda o: "Open builds (all months)" if o == "open"
-                          else f"{o:%B %Y} Company Builds")
-
-    if choice == "open":
-        frame, label = builds[(builds.status != "Completed") | (builds.qc_status != "Completed")], "Open builds"
-    else:
-        start, end = choice, month_end(choice)
-        in_month = builds.due_date.map(lambda d: d is not None and start <= d <= end)
-        no_due = builds.due_date.map(lambda d: d is None) & (choice == current)
-        frame, label = builds[in_month | no_due], f"{choice:%B %Y}"
+    start, end = choice, month_end(choice)
+    in_month = builds.due_date.map(lambda d: d is not None and start <= d <= end)
+    no_due = builds.due_date.map(lambda d: d is None) & (choice == current)
+    frame, label = builds[in_month | no_due], f"{choice:%B %Y}"
     frame = frame.sort_values(["due_date", "company_name"], key=lambda s: s.map(
         lambda v: (v is None, v) if not isinstance(v, str) else (False, v.lower())))
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Builds", len(frame))
-    c2.metric("Pending", int((frame.status.fillna("Pending") == "Pending").sum()))
-    c3.metric("In progress", int((frame.status == "In Progress").sum()))
-    c4.metric("Completed", int((frame.status == "Completed").sum()))
-    c5.metric("Awaiting QC", int(((frame.status == "Completed") & (frame.qc_status != "Completed")).sum()))
-
-    st.caption("Click a cell to edit. Add a build in the empty row at the bottom, then click **Save changes**. "
-               "Builds can't be deleted here.")
-    table = _builds_table(frame, checks)
+    st.markdown(f"#### {choice:%B %Y} Company Builds")
+    st.caption("Click a cell to edit; changes save automatically. Add a build in the empty row at the bottom, "
+               "starting with the Company Name. Builds can't be deleted here.")
+    table = _builds_table(frame)
     team = TEAM_MEMBERS
+    # The key changes after every save so the table reloads fresh from the database.
+    version = st.session_state.get("builds_editor_version", 0)
     edited = st.data_editor(
-        table, key=f"builds_editor_{choice}", hide_index=True, width="stretch", num_rows="add",
-        disabled=["Checklist"],
+        table, key=f"builds_editor_{choice}_{version}", hide_index=True, width="stretch", num_rows="add",
         column_config={
             "id": None,
             "Company Name": st.column_config.TextColumn("Company Name", width=220, required=True),
@@ -580,8 +569,6 @@ def _render_build_tracker(builds, checks):
             "QC": st.column_config.SelectboxColumn("QC", options=team, width=100),
             "QC Status": st.column_config.SelectboxColumn("QC Status", options=BUILD_STATUSES, width=125,
                                                           format_func=lambda s: STATUS_LABEL.get(s, s)),
-            "Checklist": st.column_config.TextColumn("Checklist", width=165,
-                                                     help="Progress from the QC section"),
         })
 
     originals = {int(r["id"]): r for _, r in table.iterrows()}
@@ -604,12 +591,10 @@ def _render_build_tracker(builds, checks):
             if diff:
                 updates.append((int(rid), diff, values))
 
-    pending = len(inserts) + len(updates)
     for msg in dict.fromkeys(problems):
-        st.warning(msg)
-    s1, s2 = st.columns([1, 1])
-    if s1.button(f"💾 Save changes ({pending})" if pending else "💾 Save changes", type="primary",
-                 width="stretch", disabled=pending == 0 or bool(problems), key="builds_save"):
+        st.warning(msg + " Your other edits will save once it has one.")
+    # Auto-save: as soon as an edit is made (and every row has a Company Name), write it to the database.
+    if (inserts or updates) and not problems:
         today = today_local()
         for values in inserts:
             if values["status"] == "Completed" and not values["completion_date"]:
@@ -619,12 +604,15 @@ def _render_build_tracker(builds, checks):
             if values["status"] == "Completed" and not values["completion_date"]:
                 diff["completion_date"] = today
             update_build(rid, diff)
-        flash(f"Saved: {len(inserts)} new build(s), {len(updates)} updated.")
+        parts = [f"{len(inserts)} new build{'s' if len(inserts) != 1 else ''}" if inserts else "",
+                 f"{len(updates)} update{'s' if len(updates) != 1 else ''}" if updates else ""]
+        st.session_state["_toast"] = "✅ Saved " + " and ".join(p for p in parts if p)
+        st.session_state["builds_editor_version"] = version + 1
         st.rerun()
-    s2.download_button(f"📥 Download Excel · {label}", data=export_builds_excel(table, label),
+    st.download_button(f"📥 Download Excel · {label}", data=export_builds_excel(table, label),
                        file_name=f"Company_Builds_{label.replace(' ', '_')}.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                       width="stretch", key="builds_download")
+                       key="builds_download")
 
 
 def _render_build_checklist(builds, checks):
@@ -722,7 +710,19 @@ STATUS_COLORS = ["#A0A7B4", "#E8B33A", "#2E9E5B"]   # Pending, In Progress, Comp
 DASHBOARD_START = date(2026, 11, 1)                  # the dashboard counts builds from this month on
 
 
-def _render_builds_dashboard(builds):
+def _month_options(builds):
+    """Months to choose from: November 2026 up to next month, or the latest due date if later."""
+    nxt = add_months(month_start(today_local()), 1)
+    due_months = [month_start(d) for d in builds.due_date if d]
+    last = max([nxt, *due_months])
+    opts, mo = [], DASHBOARD_START
+    while mo <= last:
+        opts.append(mo)
+        mo = add_months(mo, 1)
+    return opts
+
+
+def _render_builds_dashboard(builds, pick_month):
     import altair as alt
 
     if builds.empty:
@@ -738,18 +738,8 @@ def _render_builds_dashboard(builds):
     # The dashboard starts in November 2026; builds due earlier are left out (undated builds stay in).
     df = df[df.month.map(lambda mo: mo is None or mo >= DASHBOARD_START)]
 
-    # ── One month at a glance ──
-    current = month_start(today_local())
-    last = max([current, *[mo for mo in df.month if mo is not None]])
-    month_opts, mo = [], DASHBOARD_START
-    while mo <= last:
-        month_opts.append(mo)
-        mo = add_months(mo, 1)
-    default = month_opts.index(current) if current in month_opts else 0
-    head, pick = st.columns([3, 1], vertical_alignment="bottom")
-    pick_month = pick.selectbox("Month", month_opts, index=default, key="dash_month",
-                                format_func=lambda o: f"{o:%B %Y}")
-    head.subheader(f"{pick_month:%B %Y} builds")
+    # ── One month at a glance (month is picked in the sidebar) ──
+    st.subheader(f"{pick_month:%B %Y} builds")
     g = df[df.month == pick_month]
     g_total, g_done = len(g), int((g.status == "Completed").sum())
     m = st.columns(5)
@@ -760,20 +750,6 @@ def _render_builds_dashboard(builds):
     m[4].metric("Awaiting QC", int(((g.status == "Completed") & (g.qc_status != "Completed")).sum()))
     if g_total:
         st.progress(g_done / g_total, text=f"{g_done / g_total:.0%} of {pick_month:%B} builds completed")
-        by_person = (g.assign(person=g.built_by.fillna("Unassigned"))
-                     .groupby(["person", "status"]).size().reset_index(name="Builds"))
-        by_person["rank"] = by_person.status.map({s: i for i, s in enumerate(BUILD_STATUSES)})
-        people = by_person.groupby("person")["Builds"].sum().sort_values(ascending=False).index.tolist()
-        st.markdown("**Builds by team member**")
-        chart = alt.Chart(by_person).mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3).encode(
-            y=alt.Y("person:N", title=None, sort=people),
-            x=alt.X("sum(Builds):Q", title="Builds", axis=alt.Axis(tickMinStep=1, format="d")),
-            color=alt.Color("status:N", title=None, scale=alt.Scale(domain=BUILD_STATUSES, range=STATUS_COLORS),
-                            legend=alt.Legend(orient="bottom")),
-            order=alt.Order("rank:Q"),
-            tooltip=[alt.Tooltip("person:N", title="Built by"), alt.Tooltip("status:N", title="Status"), "Builds"])
-        # Height covers the axis and legend too, so add room for them on top of ~40px per bar.
-        st.altair_chart(chart.properties(height=40 * len(people) + 110), width="stretch")
     else:
         st.info(f"No builds are due in {pick_month:%B %Y} yet.")
 
@@ -843,7 +819,7 @@ def _render_builds_dashboard(builds):
 
 
 @st.fragment(run_every="30s")
-def _live_builds_dashboard():
+def _live_builds_dashboard(pick_month):
     """Re-reads the database and redraws the dashboard every 30 seconds."""
     try:
         builds = load_builds()
@@ -852,7 +828,7 @@ def _live_builds_dashboard():
         with st.expander("Error details"):
             st.code(str(e))
         return
-    _render_builds_dashboard(builds)
+    _render_builds_dashboard(builds, pick_month)
     st.caption(f"🟢 Live: updates automatically every 30 seconds. Last updated {now_local():%I:%M:%S %p} IST.")
 
 
@@ -994,6 +970,8 @@ def render_builds_page():
 
     if "_flash" in st.session_state:
         st.success(st.session_state.pop("_flash"))
+    if "_toast" in st.session_state:
+        st.toast(st.session_state.pop("_toast"))
 
     with st.sidebar:
         st.markdown("""<style>
@@ -1008,6 +986,15 @@ def render_builds_page():
         st.markdown("**Sections**")
         view = st.radio("Sections", list(SECTIONS), captions=list(SECTIONS.values()),
                         label_visibility="collapsed", key="builds_view")
+        pick_month = None
+        if view != "✅ QC":
+            st.divider()
+            opts = _month_options(builds)
+            current = month_start(today_local())
+            # One month choice shared by the Dashboard and the Builds table.
+            if st.session_state.get("month") not in opts:
+                st.session_state["month"] = current if current in opts else opts[0]
+            pick_month = st.selectbox("Month", opts, key="month", format_func=lambda o: f"{o:%B %Y}")
         st.divider()
         if view == "📊 Dashboard":
             st.caption("🟢 The dashboard refreshes on its own every 30 seconds.")
@@ -1016,15 +1003,15 @@ def render_builds_page():
                          help="Load the latest changes saved by others. Save your own edits first, "
                               "because refreshing clears anything not yet saved."):
                 st.rerun()
-            st.caption(f"Data as of {now_local():%I:%M %p} IST. Save your edits before refreshing.")
+            st.caption(f"Data as of {now_local():%I:%M %p} IST. Click Refresh to see changes others have saved.")
         st.button("🏠 Home", key="go_home", width="stretch", on_click=_go_home)
 
     st.title(view)
     st.caption(SECTIONS[view])
     if view == "📊 Dashboard":
-        _live_builds_dashboard()
+        _live_builds_dashboard(pick_month)
     elif view == "📋 Builds":
-        _render_build_tracker(builds, checks)
+        _render_build_tracker(builds, pick_month)
     else:
         _render_build_checklist(builds, checks)
 
