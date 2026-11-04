@@ -954,6 +954,63 @@ def _render_month(builds, pick_month):
     _builds_editor(builds, _month_frame(builds, pick_month), key=f"month_{pick_month}", label=f"{pick_month:%B %Y}")
 
 
+# Raines builds: a separate project of 52 companies, all completed 14-18 May 2026.
+# Shown on the Dashboard only (not in Monthly Builds or QC). (company code, company name, built by, completed on)
+RAINES_BUILDS = [
+    ('0YW', 'Atlantic Colony Venture I Llc. - Hampton Inn & Suites Colony', 'Supriya', "2026-05-15"),
+    ('0YX', 'Atlantic Colony Venture II Llc. - Homewood Suites Colony', 'Supriya', "2026-05-16"),
+    ('0ZJ', 'Atlantic Downtown Dallas Venture - Element Gaston', 'Supriya', "2026-05-16"),
+    ('0Z4', 'Atlantic Grapevine Inn', 'Supriya', "2026-05-16"),
+    ('0ZL', 'Atlantic McKinney Hotel Ventures Llc. - Home2 McKinney', 'Harshith', "2026-05-17"),
+    ('0ZK', 'Atlantic McKinney Hotel Ventures Llc. - Springhill Suites McKinney', 'Supriya', "2026-05-17"),
+    ('0YM', 'CAI Atlantic Waco Express LLC - Holiday Inn Express Waco', 'Harshith', "2026-05-17"),
+    ('0YS', 'CAI Atlantic Waco Suites Llc. - Towneplace Waco', 'Harshith', "2026-05-18"),
+    ('0YY', 'Cartersville Paradise Group - Hilton Garden Inn Cartersville', 'Supriya', "2026-05-18"),
+    ('0ZM', 'M&M Hotel Venture Llc. - Aloft Element Love Field', 'Supriya', "2026-05-18"),
+    ('0Z7', 'Mohit Developers Llc. - Towneplace Suites DeSoto', 'Salman', "2026-05-18"),
+    ('0YZ', 'Naresh and Asha - Hilton Garden inn Gainesville', 'Akash', "2026-05-18"),
+    ('0ZE', 'Raines HP Operations, Llc.', 'Harshith', "2026-05-18"),
+    ('0Z8', 'Raines HP Workforce, Llc.', 'Harshith', "2026-05-18"),
+    ('0Z1', 'Raines HP Workforce, Llc. Courtyard Banner Elk', 'Salman', "2026-05-16"),
+    ('0Z2', 'Raines HP Workforce, Llc. Courtyard Columbus', 'Harshith', "2026-05-16"),
+    ('0Z3', 'Raines HP Workforce, Llc. Fairfield Whitsett', 'Fiza', "2026-05-16"),
+    ('0Z5', 'Raines HP Workforce, Llc. Hilton Garden Inn Conway', 'Harshith', "2026-05-16"),
+    ('0Z6', 'Raines HP Workforce, Llc. Hilton Garden Inn Greenville', 'Harshith', "2026-05-16"),
+    ('0Z9', 'Raines HP Workforce, Llc. Hilton Garden Inn West Little Rock', 'Fiza', "2026-05-15"),
+    ('0ZA', 'Raines HP Workforce, Llc. Holiday Inn Roswell', 'Akash', "2026-05-18"),
+    ('0ZB', 'Raines HP Workforce, Llc. Home 2 Conway', 'Fiza', "2026-05-15"),
+    ('0ZC', 'Raines HP Workforce, Llc. Home2 Charlotte University', 'Salman', "2026-05-18"),
+    ('0ZD', 'Raines HP Workforce, Llc. Hotel Theo', 'Harshith', "2026-05-16"),
+    ('0ZF', 'Raines HP Workforce, Llc. Sea Palms', 'Harshith', "2026-05-16"),
+    ('0ZG', 'Raines HP Workforce, Llc. Springhill Suites Cheraw', 'Salman', "2026-05-15"),
+    ('0ZH', 'Raines HP Workforce, Llc. The Lantern Columbia', 'Salman', "2026-05-16"),
+    ('0ZN', 'Raines Staffing Llc. Cambria Hotel Mount Pleasant-Charleston', 'Supriya', "2026-05-15"),
+    ('0ZO', 'Raines Staffing Llc. Comfort Florence', 'Salman', "2026-05-14"),
+    ('0ZP', 'Raines Staffing Llc. DoubleTree Greenville', 'Fiza', "2026-05-15"),
+    ('0ZQ', 'Raines Staffing Llc. DoubleTree Riverview', 'Fiza', "2026-05-15"),
+    ('0ZR', 'Raines Staffing Llc. Doubletree Summerville', 'Supriya', "2026-05-15"),
+    ('0ZS', 'Raines Staffing Llc. Fairfield Inn & Suites Florence', 'Akash', "2026-05-14"),
+    ('0ZT', 'Raines Staffing Llc. Hampton Inn & Suites Columbia', 'Akash', "2026-05-15"),
+    ('0ZU', 'Raines Staffing Llc. Hilton Garden Inn Mt Pleasant', 'Fiza', "2026-05-15"),
+    ('0ZV', 'Raines Staffing Llc. Hotel Florence', 'Fiza', "2026-05-14"),
+    ('0ZW', 'Raines Staffing Llc. Hyatt Place Augusta', 'Harshith', "2026-05-16"),
+    ('0ZX', 'Raines Staffing Llc. Hyatt Place Florence', 'Akash', "2026-05-15"),
+    ('0ZY', 'Raines Staffing Llc. Hyatt Place Mt Pleasant', 'Harshith', "2026-05-15"),
+    ('0ZZ', 'Raines Staffing Llc. Residence Inn Florence', 'Salman', "2026-05-15"),
+    ('0YO', 'Raines Staffing Llc. Springhill Suites Charleston Mount Pleasant', 'Akash', "2026-05-15"),
+    ('0YP', 'Raines Staffing Llc. The Foundry Hotel Asheville, Curio Collection', 'Supriya', "2026-05-14"),
+    ('0YQ', 'Raines Staffing Llc. The Spa at Hotel Florence', 'Salman', "2026-05-15"),
+    ('0YR', 'Raines Staffing Llc. Towneplace Florence', 'Harshith', "2026-05-15"),
+    ('0YT', 'Raines Staffing Llc. Tru North Augusta', 'Supriya', "2026-05-15"),
+    ('0YV', 'Raines Staffing Llc. Waynesville Inn & Golf', 'Salman', "2026-05-15"),
+    ('0YN', 'Renaissance Group Cartersville Courtyard Cartersville', 'Harshith', "2026-05-18"),
+    ('10A', 'Renaissance Group Shrinathji Llc. Fairfield Inn & Suites Woodstock', 'Harshith', "2026-05-18"),
+    ('0Z0', 'Renaissance Group Woodstock Inc. Hampton Inn Woodstock', 'Salman', "2026-05-18"),
+    ('10B', 'Smithcurry Hotel GP Manchester - Panos Smith Hotel Group Manchester Villa - Hilton Garden Inn Rock Hill', 'Harshith', "2026-05-16"),
+    ('10C', 'Smithcurry Hotel Group Kings Grant - Panos Smith Hotel Group Kings Grant - Hampton Inn & Suites Speedway', 'Danielle', "2026-05-14"),
+    ('0YU', 'TT&C Hotel Group Llc. - DoubleTree Columbia', 'Supriya', "2026-05-15"),
+]
+
 STATUS_COLORS = ["#A0A7B4", "#E8B33A", "#2E9E5B"]   # Pending, In Progress, Completed
 
 
@@ -976,41 +1033,49 @@ def _render_overview(builds):
     df["qc_status"] = df.qc_status.map(lambda v: _clean_text(v) or "")
     df["month"] = df.due_date.map(lambda d: month_start(_to_date(d)) if _to_date(d) else None)
 
-    total = len(df)
+    raines = _raines_frame()
+    n_raines = len(raines)
+    total = len(df) + n_raines
     done = df.status == "Completed"
+    n_done = int(done.sum()) + n_raines          # every Raines build is completed
     qc_done = done & (df.qc_status == "Completed")
     dated = df[df.month.map(lambda v: v is not None)]
-    months = sorted(dated.month.unique())
+    months = sorted(set(dated.month.unique()) | set(raines.month))
     first = f"{months[0]:%B %Y}" if months else ""
     this_month = int((dated.month == month_start(today_local())).sum())
 
     st.subheader(f"All builds · {first} to date" if first else "All builds")
     m = st.columns(6)
-    m[0].metric("Total builds", f"{total:,}")
-    m[1].metric("Completed", f"{int(done.sum()):,}")
+    m[0].metric("Total builds", f"{total:,}", help=f"Includes the {n_raines} Raines builds")
+    m[1].metric("Completed", f"{n_done:,}", help=f"Includes the {n_raines} Raines builds")
     m[2].metric("In progress", int((df.status == "In Progress").sum()))
     m[3].metric("Pending", int((df.status == "Pending").sum()))
-    m[4].metric("QC completed", f"{int(qc_done.sum()):,}")
+    m[4].metric("QC completed", f"{int(qc_done.sum()):,}", help="Raines builds aren't QC'd in this app")
     m[5].metric("This month", this_month, help=f"Builds due in {today_local():%B %Y}")
     p1, p2 = st.columns(2)
-    p1.progress(done.sum() / total, text=f"Builds completed: {done.sum() / total:.0%}")
+    p1.progress(n_done / total, text=f"Builds completed: {n_done / total:.0%}")
     p2.progress(qc_done.sum() / done.sum() if done.sum() else 0.0,
-                text=f"QC completed: {qc_done.sum() / done.sum():.0%} of completed builds" if done.sum() else "QC")
+                text=f"QC completed: {qc_done.sum() / done.sum():.0%} of completed builds (not counting Raines)"
+                if done.sum() else "QC")
 
     if not months:
         st.info("Add due dates to builds to see the monthly chart.")
         return
     order = [f"{mo:%b %Y}" for mo in months]
 
-    # ── Builds per month, split by status ──
+    # ── Builds per month, split by status (Raines builds as their own colour) ──
     st.markdown("#### Builds per month")
     counts = dated.groupby(["month", "status"]).size().reset_index(name="Builds")
+    raines_counts = raines.groupby("month").size().reset_index(name="Builds").assign(status=RAINES_LABEL)
+    counts = pd.concat([counts, raines_counts], ignore_index=True)
     counts["Month"] = counts.month.map(lambda mo: f"{mo:%b %Y}")
-    counts["rank"] = counts.status.map({s: i for i, s in enumerate(BUILD_STATUSES)})
+    status_domain = [*BUILD_STATUSES, RAINES_LABEL]
+    counts["rank"] = counts.status.map({s: i for i, s in enumerate(status_domain)})
     bars = alt.Chart(counts).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
         x=alt.X("Month:N", sort=order, title=None, axis=alt.Axis(labelAngle=0)),
         y=alt.Y("sum(Builds):Q", title="Builds", axis=alt.Axis(tickMinStep=1, format="d")),
-        color=alt.Color("status:N", title=None, scale=alt.Scale(domain=BUILD_STATUSES, range=STATUS_COLORS),
+        color=alt.Color("status:N", title=None,
+                        scale=alt.Scale(domain=status_domain, range=[*STATUS_COLORS, RAINES_COLOR]),
                         legend=alt.Legend(orient="top")),
         order=alt.Order("rank:Q"),
         tooltip=["Month", alt.Tooltip("status:N", title="Status"), "Builds"])
@@ -1024,25 +1089,76 @@ def _render_overview(builds):
         names = [p for v in df.loc[mask, col] for p in _people(v)]
         return pd.Series(names, dtype=object).value_counts().rename_axis("Person").reset_index(name="Builds")
 
-    def person_chart(data, color):
-        base = alt.Chart(data).encode(
-            y=alt.Y("Person:N", sort="-x", title=None),
-            x=alt.X("Builds:Q", title=None, axis=alt.Axis(tickMinStep=1, format="d"),
-                    scale=alt.Scale(domain=[0, int(data.Builds.max() * 1.15) + 1])),   # room for the labels
-            tooltip=["Person", "Builds"])
-        chart = base.mark_bar(color=color, cornerRadiusTopRight=3, cornerRadiusBottomRight=3) + \
-            base.mark_text(align="left", dx=4, fontWeight="bold").encode(text="Builds:Q")
-        return chart.properties(height=30 * max(len(data), 1) + 50)
+    def person_chart(data):
+        """Completed builds per person, with their Raines builds stacked on the end of the bar."""
+        totals = data.groupby("Person", as_index=False)["Builds"].sum()
+        order = totals.sort_values(["Builds", "Person"], ascending=[False, True]).Person.tolist()
+        data = data.assign(rank=data.Type.map({"Company builds": 0, RAINES_LABEL: 1}))
+        bars = alt.Chart(data).mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3).encode(
+            y=alt.Y("Person:N", sort=order, title=None),
+            x=alt.X("sum(Builds):Q", title=None, axis=alt.Axis(tickMinStep=1, format="d"),
+                    scale=alt.Scale(domain=[0, int(totals.Builds.max() * 1.15) + 1])),   # room for the labels
+            color=alt.Color("Type:N", title=None, legend=alt.Legend(orient="top"),
+                            scale=alt.Scale(domain=["Company builds", RAINES_LABEL], range=["#2F5D9A", RAINES_COLOR])),
+            order=alt.Order("rank:Q"),
+            tooltip=["Person", "Type", "Builds"])
+        labels = alt.Chart(totals).mark_text(align="left", dx=4, fontWeight="bold").encode(
+            y=alt.Y("Person:N", sort=order), x="Builds:Q", text="Builds:Q")
+        return (bars + labels).properties(height=30 * max(len(totals), 1) + 80)
 
     st.markdown("#### Builds by team member")
-    data = per_person("built_by", done)
+    data = pd.concat([
+        per_person("built_by", done).assign(Type="Company builds"),
+        raines.built_by.value_counts().rename_axis("Person").reset_index(name="Builds").assign(Type=RAINES_LABEL),
+    ], ignore_index=True)
     if data.empty:
         st.caption("No completed builds with a Built By name yet.")
     else:
-        st.altair_chart(person_chart(data, "#2F5D9A"), width="stretch")
-    undated = total - len(dated)
+        st.altair_chart(person_chart(data), width="stretch")
+    undated = len(df) - len(dated)
     if undated:
         st.caption(f"{undated} build(s) have no due date yet: they're in the totals but not the monthly chart.")
+
+    _render_raines(raines)
+
+
+RAINES_LABEL = "Raines"
+RAINES_COLOR = "#8E6CC9"
+
+
+def _raines_frame():
+    df = pd.DataFrame(RAINES_BUILDS, columns=["company_code", "company_name", "built_by", "completion_date"])
+    df["completion_date"] = df.completion_date.map(date.fromisoformat)
+    df["month"] = df.completion_date.map(month_start)
+    return df
+
+
+def _render_raines(raines):
+    """Raines builds: done as a separate project, so they get their own section."""
+    st.divider()
+    st.subheader("🏨 Raines Builds")
+    if raines.empty:
+        st.caption("No Raines builds.")
+        return
+    start, end = raines.completion_date.min(), raines.completion_date.max()
+    when = f"{start:%B} {start.day}–{end.day}, {end:%Y}" if (start.year, start.month) == (end.year, end.month) \
+        else f"{start:%b %d, %Y} – {end:%b %d, %Y}"
+    m = st.columns(3)
+    m[0].metric("Raines builds", len(raines))
+    m[1].metric("Completed", len(raines))
+    m[2].metric("Completed on", when)
+
+    left, right = st.columns([1, 2])
+    by_person = raines.built_by.value_counts().rename_axis("Built By").reset_index(name="Company Codes")
+    by_person = pd.concat([by_person, pd.DataFrame([{"Built By": "Grand Total", "Company Codes": len(raines)}])],
+                          ignore_index=True)
+    left.dataframe(by_person, hide_index=True, width="stretch")
+    with right.expander(f"All {len(raines)} Raines builds"):
+        table = raines.sort_values(["completion_date", "company_name"]).rename(columns={
+            "company_code": "Company Code", "company_name": "Company Name", "built_by": "Built By",
+            "completion_date": "Completed On"})[["Company Code", "Company Name", "Built By", "Completed On"]]
+        st.dataframe(table, hide_index=True, width="stretch",
+                     column_config={"Completed On": st.column_config.DateColumn(format="MM/DD/YYYY")})
 
 
 @st.fragment(run_every="30s")
