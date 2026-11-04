@@ -530,7 +530,8 @@ def export_builds_excel(table, label):
 
 
 def _render_build_tracker(builds, checks):
-    with st.expander("📌 Important pointers"):
+    with st.container(border=True):
+        st.markdown("**📌 Important pointers**")
         st.markdown(BUILD_POINTERS)
 
     current = month_start(today_local())
@@ -718,6 +719,7 @@ def _render_build_checklist(builds, checks):
 
 
 STATUS_COLORS = ["#A0A7B4", "#E8B33A", "#2E9E5B"]   # Pending, In Progress, Completed
+DASHBOARD_START = date(2026, 11, 1)                  # the dashboard counts builds from this month on
 
 
 def _render_builds_dashboard(builds):
@@ -733,10 +735,52 @@ def _render_builds_dashboard(builds):
     df["built_by"] = df.built_by.map(_clean_text)
     df["qc_by"] = df.qc_by.map(_clean_text)
     df["month"] = df.due_date.map(lambda d: month_start(_to_date(d)) if _to_date(d) else None)
+    # The dashboard starts in November 2026; builds due earlier are left out (undated builds stay in).
+    df = df[df.month.map(lambda mo: mo is None or mo >= DASHBOARD_START)]
 
+    # ── One month at a glance ──
+    current = month_start(today_local())
+    last = max([current, *[mo for mo in df.month if mo is not None]])
+    month_opts, mo = [], DASHBOARD_START
+    while mo <= last:
+        month_opts.append(mo)
+        mo = add_months(mo, 1)
+    default = month_opts.index(current) if current in month_opts else 0
+    head, pick = st.columns([3, 1], vertical_alignment="bottom")
+    pick_month = pick.selectbox("Month", month_opts, index=default, key="dash_month",
+                                format_func=lambda o: f"{o:%B %Y}")
+    head.subheader(f"{pick_month:%B %Y} builds")
+    g = df[df.month == pick_month]
+    g_total, g_done = len(g), int((g.status == "Completed").sum())
+    m = st.columns(5)
+    m[0].metric("Builds due", g_total)
+    m[1].metric("Completed", g_done)
+    m[2].metric("In progress", int((g.status == "In Progress").sum()))
+    m[3].metric("Pending", int((g.status == "Pending").sum()))
+    m[4].metric("Awaiting QC", int(((g.status == "Completed") & (g.qc_status != "Completed")).sum()))
+    if g_total:
+        st.progress(g_done / g_total, text=f"{g_done / g_total:.0%} of {pick_month:%B} builds completed")
+        by_person = (g.assign(person=g.built_by.fillna("Unassigned"))
+                     .groupby(["person", "status"]).size().reset_index(name="Builds"))
+        by_person["rank"] = by_person.status.map({s: i for i, s in enumerate(BUILD_STATUSES)})
+        people = by_person.groupby("person")["Builds"].sum().sort_values(ascending=False).index.tolist()
+        st.markdown("**Builds by team member**")
+        chart = alt.Chart(by_person).mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3).encode(
+            y=alt.Y("person:N", title=None, sort=people),
+            x=alt.X("sum(Builds):Q", title="Builds", axis=alt.Axis(tickMinStep=1, format="d")),
+            color=alt.Color("status:N", title=None, scale=alt.Scale(domain=BUILD_STATUSES, range=STATUS_COLORS),
+                            legend=alt.Legend(orient="bottom")),
+            order=alt.Order("rank:Q"),
+            tooltip=[alt.Tooltip("person:N", title="Built by"), alt.Tooltip("status:N", title="Status"), "Builds"])
+        # Height covers the axis and legend too, so add room for them on top of ~40px per bar.
+        st.altair_chart(chart.properties(height=40 * len(people) + 110), width="stretch")
+    else:
+        st.info(f"No builds are due in {pick_month:%B %Y} yet.")
+
+    st.divider()
     total = len(df)
     completed = int((df.status == "Completed").sum())
-    st.subheader("Totals to date")
+    st.subheader(f"Totals since {DASHBOARD_START:%B %Y}")
     m = st.columns(6)
     m[0].metric("Total builds", total)
     m[1].metric("Completed", completed)
@@ -812,16 +856,132 @@ def _live_builds_dashboard():
     st.caption(f"🟢 Live: updates automatically every 30 seconds. Last updated {now_local():%I:%M:%S %p} IST.")
 
 
-def render_builds_page():
-    st.markdown("""<style>
-@import url('https://fonts.googleapis.com/css2?family=Michroma&display=swap');
-.bp-logo { font-family: 'Michroma', system-ui, sans-serif; font-size: 1.1rem; letter-spacing: 0.07em;
-           -webkit-text-stroke: 0.3px currentColor; margin: 0 0 0.4rem; }
-.bp-logo .sc { font-size: 0.82em; }
-</style><div class="bp-logo">N<span class="sc">ETCHEX</span></div>""", unsafe_allow_html=True)
-    st.title("🏗️ Company Builds")
-    st.caption("Company builds and QC for the CoE team. No sign-in needed: anyone with this link can view and edit.")
+def _start():
+    st.session_state["started"] = True
 
+
+def _go_home():
+    st.session_state["started"] = False
+
+
+def render_landing_page():
+    """Welcome page shown before the app. 'Get started' opens the dashboard."""
+    now = now_local()
+    greeting = "Good morning" if now.hour < 12 else "Good afternoon" if now.hour < 17 else "Good evening"
+
+    st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=Michroma&display=swap');
+.lp { font-family: 'Manrope', system-ui, sans-serif; padding-top: 1rem; }
+.lp-logo { font-family: 'Michroma', 'Eurostile', system-ui, sans-serif; font-weight: 400;
+           font-size: clamp(1.5rem, 2.4vw, 2rem); letter-spacing: 0.07em; line-height: 1;
+           white-space: nowrap; margin: 0 0 4.5rem clamp(-2.5rem, -2.5vw, -0.75rem);
+           -webkit-text-stroke: 0.4px currentColor; }
+.lp-logo .sc { font-size: 0.82em; }
+.lp-logo sup { font-size: 0.3em; letter-spacing: 0; vertical-align: 0.25em; margin-left: 0.15em;
+               -webkit-text-stroke: 0; }
+.lp-brand { font-weight: 800; font-size: clamp(1.4rem, 2.5vw, 2.1rem); line-height: 1.1;
+            letter-spacing: -0.02em; white-space: nowrap; margin: 0 0 2.2rem; }
+.lp-greet { font-size: 1.05rem; opacity: 0.8; margin: 0 0 0.9rem; }
+.lp-title { font-family: 'Manrope', system-ui, sans-serif;
+            font-weight: 800; font-size: clamp(2.4rem, 5vw, 3.7rem); line-height: 1.04;
+            letter-spacing: -0.025em; margin: 0 0 1.2rem; }
+.lp-sub { font-size: 1.08rem; line-height: 1.6; max-width: 32rem; opacity: 0.85; margin: 0 0 1.8rem; }
+</style>
+""", unsafe_allow_html=True)
+
+    left, right = st.columns([1.15, 1], gap="large")
+    with left:
+        st.markdown(f"""
+<div class="lp">
+  <div class="lp-logo" aria-label="Netchex">N<span class="sc">ETCHEX</span><sup>®</sup></div>
+  <div class="lp-brand" role="heading" aria-level="1">🏗️ Company Builds</div>
+  <p class="lp-greet">{greeting}. It's {now:%A}, {now.day} {now:%B}.</p>
+  <div class="lp-title" role="heading" aria-level="2">Build it.<br>Check it.<br>Hand it over.</div>
+  <p class="lp-sub">Track every company build and its QC checklist in one place,
+  from the first Salesforce update to the last GuideCX task.</p>
+</div>
+""", unsafe_allow_html=True)
+        b, _ = st.columns([1, 1.4])
+        b.button("Get started  →", type="primary", width="stretch", on_click=_start, key="get_started")
+
+    # Illustration: a month's build list, a sticky note from the QC checklist and today's date.
+    sample = [("Riverbend Dental", "Completed"), ("Oak & Pine Bistro", "Completed"),
+              ("Harbor Logistics", "In Progress"), ("Summit Clinics", "Pending")]
+    pill = {"Completed": "done", "In Progress": "prog", "Pending": "pend"}
+    rows = "".join(f'<div class="row"><span class="co">{n}</span><span class="pill {pill[s]}">{s}</span></div>'
+                   for n, s in sample)
+    note = "".join(f'<div class="nrow"><span>{t}</span><b>{m}</b></div>'
+                   for t, m in [("Salesforce", "✓"), ("Tax codes", "✓"), ("Billing", "✓"), ("Feature flags", "…")])
+    with right:
+        embed = getattr(st, "iframe", None)
+        if embed is None:                      # older Streamlit versions
+            import streamlit.components.v1 as components
+            embed = components.html
+        embed(f"""
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  html, body {{ margin: 0; background: transparent; font-family: 'Manrope', system-ui, sans-serif; overflow: hidden; }}
+  .wrap {{ height: 560px; display: flex; align-items: center; justify-content: center; }}
+  .stage {{ position: relative; width: 440px; height: 545px; }}
+  @media (max-width: 440px) {{ .stage {{ transform: scale(0.82); transform-origin: center; }} }}
+
+  .card {{ position: absolute; left: 30px; top: 122px; width: 300px; background: #FCFCFA; color: #13233A;
+           border-radius: 8px; padding: 22px 24px 16px; transform: rotate(-3deg); z-index: 1;
+           box-shadow: 0 22px 45px rgba(19, 35, 58, 0.30), 0 2px 6px rgba(19, 35, 58, 0.15); }}
+  .head {{ display: flex; justify-content: space-between; align-items: baseline;
+           border-bottom: 2px solid #13233A; padding-bottom: 8px; margin-bottom: 4px; }}
+  .head b {{ font-size: 19px; font-weight: 800; }}
+  .head span {{ font-size: 12px; color: #5B6B80; }}
+  .row {{ display: flex; justify-content: space-between; align-items: center; font-size: 14px;
+          padding: 11px 0; border-bottom: 1px dashed #CDD5DF; }}
+  .row:last-child {{ border-bottom: 0; }}
+  .co {{ font-weight: 600; }}
+  .pill {{ font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }}
+  .done {{ background: #D7F0E0; color: #1E7A45; }}
+  .prog {{ color: #8A5A00; background: repeating-linear-gradient(-45deg, #FFE3B0 0 6px, #FFD48A 6px 12px);
+           background-size: 17px 17px; animation: slide 1.2s linear infinite; }}
+  @keyframes slide {{ to {{ background-position: 17px 0; }} }}
+  .pend {{ background: #E6EBF1; color: #5B6B80; }}
+  .bar {{ height: 8px; border-radius: 4px; background: #E6EBF1; overflow: hidden; margin: 12px 0 4px; }}
+  .bar i {{ display: block; height: 100%; width: 50%; background: #2E9E5B; border-radius: 4px; }}
+  .foot {{ font-size: 11px; color: #5B6B80; }}
+
+  .note {{ position: absolute; right: -4px; top: 0; width: 160px; background: #FFE9A8; color: #3D3212;
+           padding: 14px 16px 12px; transform: rotate(6deg); z-index: 2; border-radius: 2px;
+           box-shadow: 0 14px 28px rgba(0, 0, 0, 0.28); }}
+  .note::before {{ content: ""; position: absolute; top: -9px; left: 50%; width: 54px; height: 18px;
+                   transform: translateX(-50%) rotate(-4deg); background: rgba(255, 255, 255, 0.55); }}
+  .note h4 {{ margin: 0 0 8px; font-size: 14px; font-weight: 800; }}
+  .nrow {{ display: flex; justify-content: space-between; font-size: 13px; padding: 3px 0;
+           border-bottom: 1px solid rgba(61, 50, 18, 0.15); }}
+  .nrow:last-child {{ border-bottom: 0; }}
+
+  .cal {{ position: absolute; left: 4px; bottom: 0; width: 118px; background: #FFFFFF; color: #13233A;
+          border-radius: 10px; overflow: hidden; transform: rotate(-7deg); z-index: 2; text-align: center;
+          box-shadow: 0 14px 28px rgba(0, 0, 0, 0.28); }}
+  .cal .m {{ background: #2F5D9A; color: #FFFFFF; font-size: 13px; font-weight: 700; padding: 5px 0; }}
+  .cal .n {{ font-size: 38px; font-weight: 800; line-height: 1; padding: 10px 0 2px; }}
+  .cal .t {{ font-size: 12px; color: #2F5D9A; font-weight: 600; padding: 0 0 10px; }}
+</style>
+<div class="wrap"><div class="stage">
+  <div class="card">
+    <div class="head"><b>{now:%B} builds</b><span>sample</span></div>
+    {rows}
+    <div class="bar"><i></i></div><div class="foot">2 of 4 completed</div>
+  </div>
+  <div class="note"><h4>QC checklist</h4>{note}</div>
+  <div class="cal"><div class="m">{now:%B}</div><div class="n">{now.day}</div><div class="t">{now:%A}</div></div>
+</div></div>
+""", height=570)
+
+
+SECTIONS = {"📊 Dashboard": "Live totals and charts",
+            "📋 Builds": "Tracker for every company build",
+            "✅ QC": "Implementation checklist per build"}
+
+
+def render_builds_page():
     try:
         builds = load_builds()
         checks = load_build_checks()
@@ -835,19 +995,35 @@ def render_builds_page():
     if "_flash" in st.session_state:
         st.success(st.session_state.pop("_flash"))
 
-    view = st.radio("Section", ["📊 Dashboard", "📋 Builds", "✅ QC"], horizontal=True,
-                    label_visibility="collapsed", key="builds_view")
-    st.divider()
+    with st.sidebar:
+        st.markdown("""<style>
+@import url('https://fonts.googleapis.com/css2?family=Michroma&display=swap');
+.sb-logo { font-family: 'Michroma', system-ui, sans-serif; font-size: 1.15rem; letter-spacing: 0.07em;
+           -webkit-text-stroke: 0.3px currentColor; margin: 0 0 0.3rem; }
+.sb-logo .sc { font-size: 0.82em; }
+</style><div class="sb-logo">N<span class="sc">ETCHEX</span></div>""", unsafe_allow_html=True)
+        st.markdown("## 🏗️ Company Builds")
+        st.caption("Builds and QC for the CoE team")
+        st.divider()
+        st.markdown("**Sections**")
+        view = st.radio("Sections", list(SECTIONS), captions=list(SECTIONS.values()),
+                        label_visibility="collapsed", key="builds_view")
+        st.divider()
+        if view == "📊 Dashboard":
+            st.caption("🟢 The dashboard refreshes on its own every 30 seconds.")
+        else:
+            if st.button("🔄 Refresh data", key="builds_refresh", width="stretch",
+                         help="Load the latest changes saved by others. Save your own edits first, "
+                              "because refreshing clears anything not yet saved."):
+                st.rerun()
+            st.caption(f"Data as of {now_local():%I:%M %p} IST. Save your edits before refreshing.")
+        st.button("🏠 Home", key="go_home", width="stretch", on_click=_go_home)
+
+    st.title(view)
+    st.caption(SECTIONS[view])
     if view == "📊 Dashboard":
         _live_builds_dashboard()
-        return
-    r1, r2 = st.columns([1, 4])
-    if r1.button("🔄 Refresh", key="builds_refresh", width="stretch",
-                 help="Load the latest changes saved by others. Save your own edits first, "
-                      "because refreshing clears anything not yet saved."):
-        st.rerun()
-    r2.caption(f"Showing data as of {now_local():%I:%M %p} IST. Click Refresh to see changes others have saved.")
-    if view == "📋 Builds":
+    elif view == "📋 Builds":
         _render_build_tracker(builds, checks)
     else:
         _render_build_checklist(builds, checks)
@@ -856,4 +1032,7 @@ def render_builds_page():
 # ─────────────────────────────────────────────────────────────
 # App
 # ─────────────────────────────────────────────────────────────
-render_builds_page()
+if st.session_state.get("started"):
+    render_builds_page()
+else:
+    render_landing_page()
