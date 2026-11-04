@@ -203,16 +203,6 @@ BUILD_FIELDS = {  # column shown in the tracker -> database field
 }
 PROPER_CASE_FIELDS = ("company_name", "hierarchy", "built_by", "assigned_by", "qc_by")
 PERSON_FIELDS = ("built_by", "assigned_by", "qc_by")
-BUILD_POINTERS = """
-- **Company Name** – Please update the correct company name.
-- **Company Code** – Enter the company code once the import is completed.
-- **Status** – Please update the current status as: Pending, In Progress, or Completed.
-- **Date of Completion** – Please follow the format: MM/DD/YYYY.
-- **Built By** – Name of the person who completed the company/shell build.
-- **Assigned By** – Name of the Payroll Lead who assigned the build.
-- **QC** – Name of the person who verified the company build.
-"""
-
 # 2025 Implementation Checklist - Direct Sales Clients.
 # (section, note shown under the section, [(sub-heading, [items])]); "★ " marks key items
 # (highlighted green on the QC page). Add new items at the END of a section so saved ticks stay aligned.
@@ -601,8 +591,11 @@ def _builds_table(frame):
         })
     cols = ["id", *BUILD_FIELDS]
     table = pd.DataFrame(rows, columns=cols)
-    for col in ("Date of Completion", "Due Date"):
-        table[col] = table[col].astype(object)
+    # Keep every column as plain values with blanks as None. A column that is blank for the whole month
+    # (e.g. Hierarchy) would otherwise turn into a number column and the table refuses to edit it as text.
+    for col in BUILD_FIELDS:
+        table[col] = pd.Series([None if _clean_text(v) is None else v for v in table[col]],
+                               index=table.index, dtype=object)
     return table
 
 
@@ -958,9 +951,6 @@ def _render_month(builds, pick_month):
                     text=f"QC completed: {int(qc_done.sum())} of {qc_base} completed builds")
 
     # ── Every build in the month: edit, add or delete right here ──
-    with st.container(border=True):
-        st.markdown("**📌 Important pointers**")
-        st.markdown(BUILD_POINTERS)
     _builds_editor(builds, _month_frame(builds, pick_month), key=f"month_{pick_month}", label=f"{pick_month:%B %Y}")
 
 
