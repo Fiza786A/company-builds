@@ -836,8 +836,20 @@ def _render_build_checklist(builds, checks):
         with st.expander(f"{done}{section}  —  Built {sec_built}/{sec_app} · QC {sec_qc}/{sec_app}"):
             if note:
                 st.caption(note)
+            # Tick (or untick) every item in this section at once. Items marked N/A are left alone.
+            # Like other ticks, nothing is saved until you click Save.
+            view = df.reset_index(drop=True)
+            applicable = ~view["N/A"]
+            t1, t2, _ = st.columns([1, 1, 4])
+            for col, field, label in ((t1, "Built", "Tick all Built"), (t2, "QC", "Tick all QC")):
+                all_now = bool(applicable.any() and view.loc[applicable, field].all())
+                want = col.checkbox(label, value=all_now, key=f"chk_all{field}_{build_id}_{si}_{show}",
+                                    help=f"Ticks {field} for every item in this section (not N/A ones). "
+                                         "Untick to clear them all. Remember to Save.")
+                if want != all_now:
+                    view.loc[applicable, field] = want
             ed = st.data_editor(
-                df.reset_index(drop=True), key=f"chk_{build_id}_{si}_{show}", hide_index=True, width="stretch",
+                view, key=f"chk_{build_id}_{si}_{show}", hide_index=True, width="stretch",
                 num_rows="fixed", disabled=["Area", "Item"],
                 column_config={"item_id": None,
                                "Area": st.column_config.TextColumn("Area", width=200),
@@ -886,6 +898,9 @@ def _render_build_checklist(builds, checks):
             if field_changes.get("status") == "Completed" and not _to_date(b.completion_date):
                 field_changes["completion_date"] = today_local()
             update_build(build_id, field_changes)
+        # Reset the "Tick all" boxes so they show the saved state again.
+        for k in [k for k in st.session_state if str(k).startswith(("chk_allBuilt_", "chk_allQC_"))]:
+            del st.session_state[k]
         flash(f"Saved {n_changes} change{'s' if n_changes != 1 else ''} for {txt(b.company_name)}.")
         st.rerun()
 
