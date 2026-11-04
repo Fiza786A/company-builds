@@ -1216,7 +1216,7 @@ def render_landing_page():
   <div class="lp-logo" aria-label="Netchex">N<span class="sc">ETCHEX</span><sup>®</sup></div>
   <div class="lp-brand" role="heading" aria-level="1">🏗️ Company Builds</div>
   <p class="lp-greet">{greeting}. It's {now:%A}, {now.day} {now:%B}.</p>
-  <div class="lp-title" role="heading" aria-level="2">Build it.<br>Check it.<br>Hand it over.</div>
+  <div class="lp-title" role="heading" aria-level="2">Build it.<br>QC it.<br>Hand it over.</div>
   <p class="lp-sub">Track every company build and its QC checklist in one place,
   from the first Salesforce update to the last GuideCX task.</p>
 </div>
