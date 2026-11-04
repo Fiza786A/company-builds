@@ -5,6 +5,7 @@ Data: Supabase (SUPABASE_URL / SUPABASE_KEY in secrets), or a local SQLite file 
 """
 import calendar
 import os
+import re
 from datetime import date, datetime
 from io import BytesIO
 from zoneinfo import ZoneInfo
@@ -60,6 +61,74 @@ def py(v):
 
 def flash(msg):
     st.session_state["_flash"] = msg
+
+
+# ── Proper casing ───────────────────────────────────────────
+# Words always written in capitals, and small words kept lower case inside a name.
+ACRONYMS = {"LLC", "LLP", "PLLC", "LP", "PC", "PA", "DBA", "USA", "US", "GMC", "YMCA", "YWCA", "CDJR", "RV",
+            "HVAC", "BBQ", "CPA", "DDS", "MD", "II", "III", "IV", "NX", "SF", "CC", "QC", "PEPM", "AI", "CEO",
+            "EAS", "OPCO", "TRT", "PHMG", "KFHS", "BHM", "IPS", "IAB", "EIM", "ATJ", "ABQFF", "ABQTPS", "AGNW",
+            "KTOSA", "MDMILLER", "TMS", "SSR", "LBP", "RPB", "MVSP", "PHX", "JTT", "DC"}
+SMALL_WORDS = {"of", "and", "the", "for", "at", "in", "on", "a", "an", "to", "by"}
+SUFFIXES = {"inc": "Inc", "inc.": "Inc.", "co": "Co", "co.": "Co.", "corp": "Corp", "corp.": "Corp.",
+            "ltd": "Ltd", "ltd.": "Ltd."}
+
+
+def _cap_word(w):
+    """Capitalise a word, also after - and ' (e.g. o'neil -> O'Neil, smith-jones -> Smith-Jones)."""
+    out, up = [], True
+    for ch in w.lower():
+        out.append(ch.upper() if up and ch.isalpha() else ch)
+        if ch.isalpha():
+            up = False
+        if ch in "-'(/":
+            up = True
+    return "".join(out)
+
+
+def proper_case(text, person=False):
+    """Proper casing for company names and people's names.
+
+    ALL-CAPS or all-lower names are rewritten word by word ("BUTLER DD IT NC" -> "Butler DD IT NC").
+    Mixed-case names are kept as typed, except for LLC/Inc-style words and words typed all in lower case.
+    """
+    text = _clean_text(text)
+    if not text:
+        return text
+    text = " ".join(text.split())
+    # Judge the casing on the main name only, so "ACME LLC (bi-weekly)" still counts as all caps.
+    main = re.split(r"\(|\s-|-\s", text)[0]
+    letters = [c for c in main if c.isalpha()] or [c for c in text if c.isalpha()]
+    shouting_or_lower = letters and (all(c.isupper() for c in letters) or all(c.islower() for c in letters))
+    words = text.split(" ")
+    # A name that is just one all-caps word plus LLC/Inc (e.g. "YPO LLC", "AGNW") is an abbreviation: keep it.
+    legal = {"LLC", "LLP", "PLLC", "LP", "PC", "PA", "INC", "CO", "CORP", "LTD"}
+    name_words = [w for w in main.split() if w.strip(".,()").upper() not in legal]
+    if shouting_or_lower and len(name_words) <= 1 and main.isupper() and not person:
+        return text                  # (people's names, e.g. SALMAN -> Salman, are always fixed)
+    out = []
+    for i, w in enumerate(words):
+        core = w.strip(".,()")
+        if not core or any(c.isdigit() for c in core):
+            out.append(w)                                   # codes like H20X2, 551- keep as typed
+        elif core.upper() in ACRONYMS:
+            out.append(w.replace(core, core.upper()))
+        elif w.lower() in SUFFIXES:
+            out.append(SUFFIXES[w.lower()])
+        elif i > 0 and core.lower() in SMALL_WORDS and (shouting_or_lower or core.islower()):
+            out.append(w.lower())
+        elif shouting_or_lower:
+            # In an all-caps name, 2-letter words (DD, IT, NC) and words with no vowels (BHM) are most likely
+            # initials, so keep them in capitals.
+            initials = w.isupper() and core not in ("ST", "DR", "MT", "FT") and (
+                ("&" in core and len(core) <= 5) or core.isalpha() and (
+                    len(core) <= 2 or not set(core.lower()) & set("aeiouy")))
+            out.append(w.upper() if initials else _cap_word(w))
+        elif core.islower():
+            out.append(_cap_word(w))
+        else:
+            out.append(w)
+    return " ".join(out)
 
 
 
@@ -129,6 +198,8 @@ BUILD_FIELDS = {  # column shown in the tracker -> database field
     "Status": "status", "Date of Completion": "completion_date", "Due Date": "due_date",
     "Built By": "built_by", "Assigned By": "assigned_by", "QC": "qc_by", "QC Status": "qc_status",
 }
+PROPER_CASE_FIELDS = ("company_name", "hierarchy", "built_by", "assigned_by", "qc_by")
+PERSON_FIELDS = ("built_by", "assigned_by", "qc_by")
 BUILD_POINTERS = """
 - **Company Name** – Please update the correct company name.
 - **Company Code** – Enter the company code once the import is completed.
@@ -412,6 +483,9 @@ def load_builds():
     for col in ("company_name", "company_code", "hierarchy", "status", "built_by", "assigned_by", "qc_by", "qc_status"):
         df[col] = df[col].map(_clean_text).astype(object)
     df["company_code"] = df["company_code"].map(lambda v: v.upper() if isinstance(v, str) else None).astype(object)
+    for col in PROPER_CASE_FIELDS:
+        df[col] = df[col].map(lambda v, p=col in PERSON_FIELDS: proper_case(v, person=p)
+                              if isinstance(v, str) else None).astype(object)
     df["id"] = df["id"].astype(int) if not df.empty else df["id"]
     return df
 
@@ -497,6 +571,8 @@ def _norm(field, value):
     text = _clean_text(value)
     if field == "company_code" and text:
         return text.upper()          # company codes are always upper case, e.g. 1kx -> 1KX
+    if field in PROPER_CASE_FIELDS:
+        return proper_case(text, person=field in PERSON_FIELDS)     # e.g. BUTLER DD IT NC -> Butler DD IT NC
     return text
 
 
@@ -549,7 +625,14 @@ def _render_build_tracker(builds, choice):
     st.caption("Click a cell to edit; changes save automatically. Add a build in the empty row at the bottom, "
                "starting with the Company Name. Builds can't be deleted here.")
     table = _builds_table(frame)
-    team = TEAM_MEMBERS
+
+    def with_extras(base, *cols):
+        """Dropdown choices: the standard list, plus any other names already saved (e.g. older builds)."""
+        extra = sorted({v for c in cols for v in builds[c] if isinstance(v, str) and v not in base})
+        return list(base) + extra
+
+    team = with_extras(TEAM_MEMBERS, "built_by", "qc_by")
+    leads = with_extras(PAYROLL_LEADS, "assigned_by")
     # The key changes after every save so the table reloads fresh from the database.
     version = st.session_state.get("builds_editor_version", 0)
     edited = st.data_editor(
@@ -565,7 +648,7 @@ def _render_build_tracker(builds, choice):
             "Date of Completion": st.column_config.DateColumn("Completed On", format="MM/DD/YYYY", width=120),
             "Due Date": st.column_config.DateColumn("Due Date", format="MM/DD/YYYY", width=100),
             "Built By": st.column_config.SelectboxColumn("Built By", options=team, width=100),
-            "Assigned By": st.column_config.SelectboxColumn("Assigned By", options=PAYROLL_LEADS, width=105),
+            "Assigned By": st.column_config.SelectboxColumn("Assigned By", options=leads, width=105),
             "QC": st.column_config.SelectboxColumn("QC", options=team, width=100),
             "QC Status": st.column_config.SelectboxColumn("QC Status", options=BUILD_STATUSES, width=125,
                                                           format_func=lambda s: STATUS_LABEL.get(s, s)),
@@ -706,116 +789,92 @@ def _render_build_checklist(builds, checks):
         st.info("Every checklist item is QC'd. Set **QC Status** to Completed in the 📋 Builds section.")
 
 
-STATUS_COLORS = ["#A0A7B4", "#E8B33A", "#2E9E5B"]   # Pending, In Progress, Completed
-DASHBOARD_START = date(2026, 11, 1)                  # the dashboard counts builds from this month on
 
 
 def _month_options(builds):
-    """Months to choose from: November 2026 up to next month, or the latest due date if later."""
+    """Months to choose from, newest first: from the earliest due date up to next month (or a later due date)."""
     nxt = add_months(month_start(today_local()), 1)
     due_months = [month_start(d) for d in builds.due_date if d]
+    first = min([month_start(today_local()), *due_months])
     last = max([nxt, *due_months])
-    opts, mo = [], DASHBOARD_START
+    opts, mo = [], first
     while mo <= last:
         opts.append(mo)
         mo = add_months(mo, 1)
-    return opts
+    return opts[::-1]
 
 
 def _render_builds_dashboard(builds, pick_month):
-    import altair as alt
-
-    if builds.empty:
-        st.info("No builds yet. Add builds in the 📋 Builds section and the totals will appear here.")
-        return
+    """One section for the month picked in the sidebar: the numbers, progress, and what needs attention."""
+    today = today_local()
+    current = month_start(today)
 
     df = builds.copy()
     df["status"] = df.status.map(lambda v: _clean_text(v) or "Pending")
     df["qc_status"] = df.qc_status.map(lambda v: _clean_text(v) or "")
-    df["built_by"] = df.built_by.map(_clean_text)
-    df["qc_by"] = df.qc_by.map(_clean_text)
-    df["month"] = df.due_date.map(lambda d: month_start(_to_date(d)) if _to_date(d) else None)
-    # The dashboard starts in November 2026; builds due earlier are left out (undated builds stay in).
-    df = df[df.month.map(lambda mo: mo is None or mo >= DASHBOARD_START)]
+    df["due"] = df.due_date.map(_to_date)
+    # Same builds as the Builds table: due in this month, plus builds with no due date (shown in the current month).
+    start, end = pick_month, month_end(pick_month)
+    in_month = df.due.map(lambda d: d is not None and start <= d <= end)
+    no_due = df.due.map(lambda d: d is None) & (pick_month == current)
+    g = df[in_month | no_due]
 
-    # ── One month at a glance (month is picked in the sidebar) ──
     st.subheader(f"{pick_month:%B %Y} builds")
-    g = df[df.month == pick_month]
-    g_total, g_done = len(g), int((g.status == "Completed").sum())
-    m = st.columns(5)
-    m[0].metric("Builds due", g_total)
-    m[1].metric("Completed", g_done)
+    if g.empty:
+        st.info(f"No builds for {pick_month:%B %Y} yet. Add them in the 📋 Builds section.")
+        return
+
+    total = len(g)
+    done = g.status == "Completed"
+    qc_done = done & (g.qc_status == "Completed")
+    overdue = (~done) & g.due.map(lambda d: d is not None and d < today)
+
+    m = st.columns(6)
+    m[0].metric("Builds", total, help="Builds due this month, plus any without a due date")
+    m[1].metric("Completed", int(done.sum()))
     m[2].metric("In progress", int((g.status == "In Progress").sum()))
     m[3].metric("Pending", int((g.status == "Pending").sum()))
-    m[4].metric("Awaiting QC", int(((g.status == "Completed") & (g.qc_status != "Completed")).sum()))
-    if g_total:
-        st.progress(g_done / g_total, text=f"{g_done / g_total:.0%} of {pick_month:%B} builds completed")
-    else:
-        st.info(f"No builds are due in {pick_month:%B %Y} yet.")
+    m[4].metric("Awaiting QC", int((done & ~qc_done).sum()), help="Built, but QC not completed yet")
+    m[5].metric("Overdue", int(overdue.sum()), help="Past the due date and not completed")
 
-    st.divider()
-    total = len(df)
-    completed = int((df.status == "Completed").sum())
-    st.subheader(f"Totals since {DASHBOARD_START:%B %Y}")
-    m = st.columns(6)
-    m[0].metric("Total builds", total)
-    m[1].metric("Completed", completed)
-    m[2].metric("In progress", int((df.status == "In Progress").sum()))
-    m[3].metric("Pending", int((df.status == "Pending").sum()))
-    m[4].metric("QC completed", int((df.qc_status == "Completed").sum()))
-    m[5].metric("Awaiting QC", int(((df.status == "Completed") & (df.qc_status != "Completed")).sum()))
-    if total:
-        st.progress(completed / total, text=f"{completed / total:.0%} of all builds completed")
+    p1, p2 = st.columns(2)
+    p1.progress(done.sum() / total, text=f"Builds completed: {int(done.sum())} of {total} ({done.sum() / total:.0%})")
+    qc_base = int(done.sum())
+    p2.progress(qc_done.sum() / qc_base if qc_base else 0.0,
+                text=f"QC completed: {int(qc_done.sum())} of {qc_base} completed builds")
 
-    dated = df[df.month.map(lambda v: v is not None)]
-    if dated.empty:
-        st.info("Add due dates to builds to see the month-by-month charts.")
+    # ── Still open: everything not fully done, with a note on why it needs a look ──
+    def note(r):
+        if r.status == "Completed":
+            return "🔍 Awaiting QC"
+        if r.due is None:
+            return "📅 No due date"
+        days = (r.due - today).days
+        if days < 0:
+            return f"🔴 Overdue by {-days} day{'s' if days != -1 else ''}"
+        if days == 0:
+            return "🟠 Due today"
+        return f"Due in {days} day{'s' if days != 1 else ''}"
+
+    still_open = g[~qc_done].copy()
+    st.markdown(f"**Still open** · {len(still_open)} build{'s' if len(still_open) != 1 else ''}")
+    if still_open.empty:
+        st.success("Every build this month is completed and QC'd. 🎉")
         return
-    months = sorted(dated.month.unique())
-    order = [f"{mo:%b %Y}" for mo in months]
-
-    st.divider()
-    left, right = st.columns(2)
-    with left:
-        st.markdown("**Builds per month** (by due date)")
-        counts = dated.groupby(["month", "status"]).size().reset_index(name="Builds")
-        counts["Month"] = counts.month.map(lambda mo: f"{mo:%b %Y}")
-        counts["rank"] = counts.status.map({s: i for i, s in enumerate(BUILD_STATUSES)})
-        bars = alt.Chart(counts).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
-            x=alt.X("Month:N", sort=order, title=None, axis=alt.Axis(labelAngle=0)),
-            y=alt.Y("sum(Builds):Q", title="Builds", axis=alt.Axis(tickMinStep=1, format="d")),
-            color=alt.Color("status:N", title=None, scale=alt.Scale(domain=BUILD_STATUSES, range=STATUS_COLORS),
-                            legend=alt.Legend(orient="bottom")),
-            order=alt.Order("rank:Q"),
-            tooltip=["Month", alt.Tooltip("status:N", title="Status"), "Builds"])
-        totals = counts.groupby("Month", as_index=False)["Builds"].sum()
-        labels = alt.Chart(totals).mark_text(dy=-8, fontWeight="bold").encode(
-            x=alt.X("Month:N", sort=order), y="Builds:Q", text="Builds:Q")
-        st.altair_chart((bars + labels).properties(height=320), width="stretch")
-    with right:
-        st.markdown("**Total builds to date** (running total)")
-        per_month = dated.groupby("month").size().reindex(months).fillna(0).cumsum()
-        cum = pd.DataFrame({"Month": order, "Total builds": per_month.astype(int).values})
-        base = alt.Chart(cum).encode(x=alt.X("Month:N", sort=order, title=None, axis=alt.Axis(labelAngle=0)),
-                                     y=alt.Y("Total builds:Q", title="Builds", axis=alt.Axis(tickMinStep=1, format="d")))
-        line = base.mark_line(point=alt.OverlayMarkDef(size=70), color="#2F5D9A", strokeWidth=3)
-        text = base.mark_text(dy=-12, fontWeight="bold", color="#2F5D9A").encode(text="Total builds:Q")
-        st.altair_chart((line + text).properties(height=320), width="stretch")
-
-    st.divider()
-    st.markdown("**Month by month**")
-    rows = []
-    for mo in months:
-        g = dated[dated.month == mo]
-        rows.append({"Month": f"{mo:%B %Y}", "Total": len(g),
-                     "Completed": int((g.status == "Completed").sum()),
-                     "In Progress": int((g.status == "In Progress").sum()),
-                     "Pending": int((g.status == "Pending").sum()),
-                     "QC Completed": int((g.qc_status == "Completed").sum())})
-    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-    undated = total - len(dated)
-    if undated:
-        st.caption(f"{undated} build(s) have no due date yet, so they're counted in the totals but not the months.")
+    still_open["note"] = still_open.apply(note, axis=1)
+    still_open["order"] = still_open.apply(
+        lambda r: (0 if "Overdue" in r.note else 1 if r.status != "Completed" else 2,
+                   r.due or date.max), axis=1)
+    still_open = still_open.sort_values("order")
+    st.dataframe(pd.DataFrame({
+        "Company": still_open.company_name,
+        "Note": still_open.note,
+        "Code": still_open.company_code.fillna("—"),
+        "Due": still_open.due.map(lambda d: f"{d:%m/%d/%Y}" if d else "—"),
+        "Status": still_open.status.map(lambda s: STATUS_LABEL.get(s, s)),
+        "Built By": still_open.built_by.fillna("—"),
+        "Assigned By": still_open.assigned_by.fillna("—"),
+    }), hide_index=True, width="stretch")
 
 
 @st.fragment(run_every="30s")
