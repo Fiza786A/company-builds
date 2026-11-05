@@ -610,32 +610,86 @@ def _norm(field, value):
     return text
 
 
-def export_builds_excel(table, label):
-    from openpyxl import Workbook
+def _write_sheet(ws, title, headers, rows, date_cols=(), status_cols=()):
+    """One formatted sheet: a title, a yellow header row, coloured statuses and MM/DD/YYYY dates."""
     from openpyxl.styles import Font, PatternFill
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Company Builds"
-    ws.append([f"Company Builds – {label}"])
+    ws.append([title])
     ws["A1"].font = Font(bold=True, size=14)
     ws.append([])
-    headers = [*BUILD_FIELDS]
     ws.append(headers)
     for c in ws[3]:
         c.font = Font(bold=True)
         c.fill = PatternFill("solid", fgColor="FFE699")
     fills = {"Completed": "C6EFCE", "In Progress": "FFEB9C"}
-    for _, r in table.iterrows():
-        ws.append([py(r[h]) if h not in ("Date of Completion", "Due Date") else r[h] for h in headers])
-        for col_name in ("Status", "QC Status"):
+    for row in rows:
+        ws.append(row)
+        for col_name in status_cols:
             cell = ws.cell(row=ws.max_row, column=headers.index(col_name) + 1)
             if cell.value in fills:
                 cell.fill = PatternFill("solid", fgColor=fills[cell.value])
-        for col_name in ("Date of Completion", "Due Date"):
+        for col_name in date_cols:
             ws.cell(row=ws.max_row, column=headers.index(col_name) + 1).number_format = "mm/dd/yyyy"
     for col in ws.columns:
         ws.column_dimensions[col[0].column_letter].width = min(max(len(str(x.value or "")) for x in col[2:]) + 2, 45)
+    ws.freeze_panes = "A4"
+
+
+def _builds_rows(table):
+    headers = [*BUILD_FIELDS]
+    return headers, [[py(r[h]) if h not in ("Date of Completion", "Due Date") else r[h] for h in headers]
+                     for _, r in table.iterrows()]
+
+
+def export_builds_excel(table, label):
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Company Builds"
+    headers, rows = _builds_rows(table)
+    _write_sheet(ws, f"Company Builds – {label}", headers, rows,
+                 date_cols=("Date of Completion", "Due Date"), status_cols=("Status", "QC Status"))
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def export_all_builds_excel(builds, raines):
+    """Every build to date: a Summary sheet, all company builds, and the Raines builds."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    table = _builds_table(builds.sort_values(["due_date", "company_name"], key=lambda s: s.map(
+        lambda v: (v is None, v) if not isinstance(v, str) else (False, v.lower()))))
+    done = int((builds.status == "Completed").sum())
+    qc_done = int(((builds.status == "Completed") & (builds.qc_status == "Completed")).sum())
+    stamp = f"{today_local():%m/%d/%Y}"
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Summary"
+    summary = [
+        ("Company builds", len(builds)), ("Raines builds", len(raines)),
+        ("Total builds", len(builds) + len(raines)),
+        ("Completed (incl. Raines)", done + len(raines)),
+        ("In progress", int((builds.status == "In Progress").sum())),
+        ("Pending", int((builds.status == "Pending").sum())),
+        ("QC completed (company builds)", qc_done),
+    ]
+    _write_sheet(ws, f"All builds to date – as of {stamp}", ["", "Builds"], [list(r) for r in summary])
+    ws.cell(row=6, column=1).font = Font(bold=True)    # Total builds
+    ws.cell(row=6, column=2).font = Font(bold=True)
+
+    headers, rows = _builds_rows(table)
+    _write_sheet(wb.create_sheet("Company Builds"), f"Company Builds – all months (as of {stamp})", headers, rows,
+                 date_cols=("Date of Completion", "Due Date"), status_cols=("Status", "QC Status"))
+
+    r = raines.sort_values(["completion_date", "company_name"])
+    _write_sheet(wb.create_sheet("Raines Builds"), "Raines Builds",
+                 ["Company Code", "Company Name", "Built By", "Status", "Date of Completion"],
+                 [[x.company_code, x.company_name, x.built_by, "Completed", x.completion_date] for x in r.itertuples()],
+                 date_cols=("Date of Completion",), status_cols=("Status",))
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -1072,6 +1126,12 @@ def _render_overview(builds):
     p2.progress(qc_done.sum() / done.sum() if done.sum() else 0.0,
                 text=f"QC completed: {qc_done.sum() / done.sum():.0%} of completed builds (not counting Raines)"
                 if done.sum() else "QC")
+    st.download_button(f"📥 Download all builds to date (Excel · {total:,} builds)",
+                       data=export_all_builds_excel(df, raines),
+                       file_name=f"Company_Builds_All_to_{today_local():%Y-%m-%d}.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       key="all_builds_download",
+                       help="Summary, every company build (all months) and the Raines builds, one sheet each")
 
     if not months:
         st.info("Add due dates to builds to see the monthly chart.")
