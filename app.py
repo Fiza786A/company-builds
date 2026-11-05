@@ -855,11 +855,12 @@ def _render_build_checklist(builds, checks):
         qc_mask = order.qc_by.map(lambda v: who in _people(v))
         order = order[built_mask | qc_mask]
         st.markdown(f"#### {who}")
+        qc_complete = order.reindex(built_mask.index).qc_status == "Completed"
         c = st.columns(3)
         c[0].metric("Builds", int(built_mask.sum()), help="Builds where they're the Built By")
         c[1].metric("Builds completed", int((built_mask & (order.reindex(built_mask.index).status == "Completed")).sum()))
-        c[2].metric("QC'd", int((qc_mask & (order.reindex(qc_mask.index).qc_status == "Completed")).sum()),
-                    help="Builds they QC'd where the QC Status is Completed")
+        c[2].metric("QC'd", int((built_mask & qc_complete).sum()),
+                    help="Their builds where the QC Status is Completed, whoever did the QC")
         if order.empty:
             st.info(f"{who} has no builds yet.")
             return
