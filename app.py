@@ -1089,7 +1089,8 @@ def _render_month(builds, pick_month):
         overdue = (~done) & (~not_req) & g.due.map(lambda d: d is not None and d < today)
 
         m = st.columns(7)
-        m[0].metric("Builds", total, help="Builds due this month, plus any without a due date")
+        m[0].metric("Builds", needed, help="Builds due this month, plus any without a due date. "
+                    "N/A (Not Required) builds are not included")
         m[1].metric("Completed", int(done.sum()))
         m[2].metric("In progress", int((g.status == "In Progress").sum()))
         m[3].metric("Pending", int((g.status == "Pending").sum()))
@@ -1099,8 +1100,7 @@ def _render_month(builds, pick_month):
 
         p1, p2 = st.columns(2)
         p1.progress(done.sum() / needed if needed else 1.0,
-                    text=f"Builds completed: {int(done.sum())} of {needed} ({done.sum() / needed if needed else 1:.0%})"
-                    + (" · Not Required builds left out" if not_req.any() else ""))
+                    text=f"Builds completed: {int(done.sum())} of {needed} ({done.sum() / needed if needed else 1:.0%})")
         qc_base = int(done.sum())
         p2.progress(qc_done.sum() / qc_base if qc_base else 0.0,
                     text=f"QC completed: {int(qc_done.sum())} of {qc_base} completed builds")
@@ -1190,8 +1190,8 @@ def _render_overview(builds):
 
     raines = _raines_frame()
     n_raines = len(raines)
-    total = len(df) + n_raines
     n_not_req = int((df.status == NOT_REQUIRED).sum())
+    total = len(df) - n_not_req + n_raines      # Not Required (N/A) builds aren't counted in the total
     done = df.status == "Completed"
     n_done = int(done.sum()) + n_raines          # every Raines build is completed
     qc_done = done & (df.qc_status == "Completed")
@@ -1209,7 +1209,8 @@ def _render_overview(builds):
                             "and the Raines builds, one sheet each"),
                 unsafe_allow_html=True)
     m = st.columns(7)
-    m[0].metric("Total builds", f"{total:,}", help=f"Includes the {n_raines} Raines builds")
+    m[0].metric("Total builds", f"{total:,}", help=f"Includes the {n_raines} Raines builds. "
+                f"N/A (Not Required) builds are not included" + (f" ({n_not_req})" if n_not_req else ""))
     m[1].metric("Completed", f"{n_done:,}", help=f"Includes the {n_raines} Raines builds")
     m[2].metric("In progress", int((df.status == "In Progress").sum()))
     m[3].metric("Pending", int((df.status == "Pending").sum()))
@@ -1217,9 +1218,7 @@ def _render_overview(builds):
     m[5].metric("QC completed", f"{int(qc_done.sum()):,}", help="Raines builds aren't QC'd in this app")
     m[6].metric("This month", this_month, help=f"Builds due in {today_local():%B %Y}")
     p1, p2 = st.columns(2)
-    needed = total - n_not_req          # Not Required builds don't count towards progress
-    p1.progress(n_done / needed if needed else 1.0, text=f"Builds completed: {n_done / needed if needed else 1:.0%}"
-                + (" (Not Required builds left out)" if n_not_req else ""))
+    p1.progress(n_done / total if total else 1.0, text=f"Builds completed: {n_done / total if total else 1:.0%}")
     p2.progress(qc_done.sum() / done.sum() if done.sum() else 0.0,
                 text=f"QC completed: {qc_done.sum() / done.sum():.0%} of completed builds (not counting Raines)"
                 if done.sum() else "QC")
