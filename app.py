@@ -190,8 +190,10 @@ def _fetch_all(table, cols):
 # ─────────────────────────────────────────────────────────────
 # Company Builds
 # ─────────────────────────────────────────────────────────────
-BUILD_STATUSES = ["Pending", "In Progress", "Completed"]
-STATUS_LABEL = {"Pending": "⚪ Pending", "In Progress": "🟡 In Progress", "Completed": "🟢 Completed"}
+NOT_REQUIRED = "Not Required"
+BUILD_STATUSES = ["Pending", "In Progress", "Completed", NOT_REQUIRED]
+STATUS_LABEL = {"Pending": "⚪ Pending", "In Progress": "🟡 In Progress", "Completed": "🟢 Completed",
+                NOT_REQUIRED: "⚫ Not Required"}
 # Payroll Leads who assign builds (US team). Add names here as needed.
 PAYROLL_LEADS = ["Chelsi", "Dakota", "Jessikah", "Kristin", "Lauren", "Macy", "Tiffany"]
 
@@ -695,6 +697,7 @@ def export_all_builds_excel(builds, raines):
         ("Completed (incl. Raines)", done + len(raines)),
         ("In progress", int((builds.status == "In Progress").sum())),
         ("Pending", int((builds.status == "Pending").sum())),
+        ("Not Required", int((builds.status == NOT_REQUIRED).sum())),
         ("QC completed (company builds)", qc_done),
     ]
     _write_sheet(ws, f"All builds to date – as of {stamp}", ["", "Builds"], [list(r) for r in summary])
@@ -852,7 +855,8 @@ def _render_team_overview(builds, people):
         rows.append({"Team member": p, "Builds": int(mine.sum()), "Completed": int(done.sum()),
                      "In progress": int((mine & (status == "In Progress")).sum()),
                      "Pending": int((mine & (status == "Pending")).sum()),
-                     "QC'd": int(qcd.sum()), "Awaiting QC": int((done & ~qcd).sum())})
+                     "QC'd": int(qcd.sum()),
+                     "Awaiting QC": int((done & ~qcd & (qc_status != NOT_REQUIRED)).sum())})
     table = pd.DataFrame(rows)
 
     def open_person():
@@ -1077,13 +1081,16 @@ def _render_month(builds, pick_month):
     if g.empty:
         st.info(f"No builds for {pick_month:%B %Y} yet. Add them in the table below.")
     else:
+        not_req = g.status == NOT_REQUIRED
         total = len(g)
+        needed = total - int(not_req.sum())     # Not Required builds don't count towards progress
         done = g.status == "Completed"
-        qc_done = done & (g.qc_status == "Completed")
-        overdue = (~done) & g.due.map(lambda d: d is not None and d < today)
+        qc_done = done & g.qc_status.isin(["Completed", NOT_REQUIRED])
+        overdue = (~done) & (~not_req) & g.due.map(lambda d: d is not None and d < today)
 
         m = st.columns(6)
-        m[0].metric("Builds", total, help="Builds due this month, plus any without a due date")
+        m[0].metric("Builds", total, help="Builds due this month, plus any without a due date"
+                    + (f". {int(not_req.sum())} marked Not Required" if not_req.any() else ""))
         m[1].metric("Completed", int(done.sum()))
         m[2].metric("In progress", int((g.status == "In Progress").sum()))
         m[3].metric("Pending", int((g.status == "Pending").sum()))
@@ -1091,8 +1098,9 @@ def _render_month(builds, pick_month):
         m[5].metric("Overdue", int(overdue.sum()), help="Past the due date and not completed")
 
         p1, p2 = st.columns(2)
-        p1.progress(done.sum() / total,
-                    text=f"Builds completed: {int(done.sum())} of {total} ({done.sum() / total:.0%})")
+        p1.progress(done.sum() / needed if needed else 1.0,
+                    text=f"Builds completed: {int(done.sum())} of {needed} ({done.sum() / needed if needed else 1:.0%})"
+                    + (" · Not Required builds left out" if not_req.any() else ""))
         qc_base = int(done.sum())
         p2.progress(qc_done.sum() / qc_base if qc_base else 0.0,
                     text=f"QC completed: {int(qc_done.sum())} of {qc_base} completed builds")
@@ -1158,7 +1166,7 @@ RAINES_BUILDS = [
     ('0YU', 'TT&C Hotel Group Llc. - DoubleTree Columbia', 'Supriya', "2026-05-15"),
 ]
 
-STATUS_COLORS = ["#A0A7B4", "#E8B33A", "#2E9E5B"]   # Pending, In Progress, Completed
+STATUS_COLORS = ["#A0A7B4", "#E8B33A", "#2E9E5B", "#4A5568"]   # Pending, In Progress, Completed, Not Required
 
 
 def _people(value):
@@ -1183,6 +1191,7 @@ def _render_overview(builds):
     raines = _raines_frame()
     n_raines = len(raines)
     total = len(df) + n_raines
+    n_not_req = int((df.status == NOT_REQUIRED).sum())
     done = df.status == "Completed"
     n_done = int(done.sum()) + n_raines          # every Raines build is completed
     qc_done = done & (df.qc_status == "Completed")
@@ -1200,14 +1209,17 @@ def _render_overview(builds):
                             "and the Raines builds, one sheet each"),
                 unsafe_allow_html=True)
     m = st.columns(6)
-    m[0].metric("Total builds", f"{total:,}", help=f"Includes the {n_raines} Raines builds")
+    m[0].metric("Total builds", f"{total:,}", help=f"Includes the {n_raines} Raines builds"
+                + (f" and {n_not_req} marked Not Required" if n_not_req else ""))
     m[1].metric("Completed", f"{n_done:,}", help=f"Includes the {n_raines} Raines builds")
     m[2].metric("In progress", int((df.status == "In Progress").sum()))
     m[3].metric("Pending", int((df.status == "Pending").sum()))
     m[4].metric("QC completed", f"{int(qc_done.sum()):,}", help="Raines builds aren't QC'd in this app")
     m[5].metric("This month", this_month, help=f"Builds due in {today_local():%B %Y}")
     p1, p2 = st.columns(2)
-    p1.progress(n_done / total, text=f"Builds completed: {n_done / total:.0%}")
+    needed = total - n_not_req          # Not Required builds don't count towards progress
+    p1.progress(n_done / needed if needed else 1.0, text=f"Builds completed: {n_done / needed if needed else 1:.0%}"
+                + (" (Not Required builds left out)" if n_not_req else ""))
     p2.progress(qc_done.sum() / done.sum() if done.sum() else 0.0,
                 text=f"QC completed: {qc_done.sum() / done.sum():.0%} of completed builds (not counting Raines)"
                 if done.sum() else "QC")
