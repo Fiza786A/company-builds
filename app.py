@@ -5,6 +5,7 @@ Data: Supabase (SUPABASE_URL / SUPABASE_KEY in secrets), or a local SQLite file 
 """
 import base64
 import calendar
+import hmac
 import html
 import os
 import re
@@ -1395,7 +1396,23 @@ def _live(render, *args):
     st.caption(f"🟢 Live: updates automatically every 30 seconds. Last updated {now_local():%I:%M:%S %p} IST.")
 
 
+# Team passcode: set APP_PASSCODE in the app's Streamlit secrets to require it on the welcome page.
+# Leave it out to open the app with no passcode. Change it there at any time; the old one stops working at once.
+APP_PASSCODE = _secrets_get("APP_PASSCODE")
+
+
+def _needs_passcode():
+    return bool(APP_PASSCODE) and not st.session_state.get("authed")
+
+
 def _start():
+    if _needs_passcode():
+        typed = str(st.session_state.get("passcode_input", "")).strip()
+        if not hmac.compare_digest(typed.encode(), str(APP_PASSCODE).strip().encode()):
+            st.session_state["passcode_error"] = True
+            return
+        st.session_state["authed"] = True       # remembered for this visit, so Home → Get started needs no retyping
+        st.session_state.pop("passcode_input", None)
     st.session_state["started"] = True
 
 
@@ -1442,7 +1459,16 @@ def render_landing_page():
 </div>
 """, unsafe_allow_html=True)
         b, _ = st.columns([1, 1.4])
-        b.button("Get started  →", type="primary", width="stretch", on_click=_start, key="get_started")
+        if _needs_passcode():
+            # Team passcode: Enter or the button both submit.
+            with b.form("passcode_form", border=False):
+                st.text_input("Team passcode", type="password", key="passcode_input",
+                              placeholder="Enter the team passcode")
+                st.form_submit_button("Get started  →", type="primary", width="stretch", on_click=_start)
+            if st.session_state.pop("passcode_error", False):
+                b.error("That passcode isn't right. Ask your team lead for the current one.")
+        else:
+            b.button("Get started  →", type="primary", width="stretch", on_click=_start, key="get_started")
 
     # Illustration: a month's build list, a sticky note from the QC checklist and today's date.
     sample = [("Riverbend Dental", "Completed"), ("Oak & Pine Bistro", "Completed"),
@@ -1586,7 +1612,7 @@ def render_builds_page():
 # ─────────────────────────────────────────────────────────────
 # App
 # ─────────────────────────────────────────────────────────────
-if st.session_state.get("started"):
+if st.session_state.get("started") and not _needs_passcode():
     render_builds_page()
 else:
     render_landing_page()
