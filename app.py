@@ -863,19 +863,45 @@ def _render_build_checklist(builds, checks):
         if order.empty:
             st.info(f"{who} has no builds yet.")
             return
-        with st.expander(f"All of {who}'s builds ({len(order)}) · click to view and edit", expanded=False):
-            _builds_editor(builds, order, key=f"person_{who}", label=who)
-
     labels = {int(r.id): txt(r.company_name) + (f" ({txt(r.company_code)})" if txt(r.company_code) else "")
               + due(r.due_date) for r in order.itertuples()}
-    build_id = st.selectbox("Company build", list(labels), format_func=labels.get, key=f"chk_build_{who}")
+
+    if who == ALL:
+        build_id = st.selectbox("Company build", list(labels), format_func=labels.get, key=f"chk_build_{who}")
+    else:
+        # Their builds as a table: click a row to open that build's checklist below.
+        # Streamlit tables can't be clickable and editable at once, so editing is behind a switch.
+        pick_key = f"chk_pick_{who}"
+        top1, top2 = st.columns([3, 1], vertical_alignment="center")
+        top1.markdown(f"**{who}'s builds ({len(order)})** · click a row to open its checklist")
+        editing = top2.toggle("✏️ Edit builds", key=f"chk_edit_{who}",
+                              help="Switch on to edit, add or delete these builds. Switch off to pick a build again.")
+        if editing:
+            _builds_editor(builds, order, key=f"person_{who}", label=who)
+        else:
+            table = _builds_table(order).reset_index(drop=True)
+            shown = table.copy()
+            for col in ("Status", "QC Status"):
+                shown[col] = shown[col].map(lambda s: STATUS_LABEL.get(s, s) if s else "")
+            event = st.dataframe(
+                shown, key=f"chk_table_{who}", hide_index=True, width="stretch", on_select="rerun",
+                selection_mode=["single-row", "single-cell"], height=min(35 * len(shown) + 40, 400),
+                column_config={"id": None,
+                               "Date of Completion": st.column_config.DateColumn("Completed On", format="MM/DD/YYYY"),
+                               "Due Date": st.column_config.DateColumn("Due Date", format="MM/DD/YYYY")})
+            # Clicking any cell (e.g. the company name) or the tick box at the left of a row opens that build.
+            picked = event.selection.rows or [c[0] for c in event.selection.cells]
+            if picked:
+                st.session_state[pick_key] = int(table.at[picked[0], "id"])
+        build_id = st.session_state.get(pick_key)
+        if build_id not in labels:
+            build_id = next(iter(labels))     # nothing clicked yet: the most recent build
+        st.markdown(f"#### ✅ Checklist · {labels[build_id]}")
     b = builds[builds.id == build_id].iloc[0]
     status, qc_status = txt(b.status) or "Pending", txt(b.qc_status) or "Pending"
 
     st.markdown(f"**Status:** {STATUS_LABEL.get(status, status)} &nbsp;·&nbsp; "
                 f"**QC status:** {STATUS_LABEL.get(qc_status, qc_status)}")
-    st.caption("★ = key items. Tick N/A for items that don't apply to this client. "
-               "Built By, QC By and the statuses can be changed at the bottom.")
 
     saved = {r.item_id: r for r in checks[checks.build_id == build_id].itertuples()}
 
