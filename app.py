@@ -3,7 +3,9 @@
 Run locally:  streamlit run app.py
 Data: Supabase (SUPABASE_URL / SUPABASE_KEY in secrets), or a local SQLite file when those are not set.
 """
+import base64
 import calendar
+import html
 import os
 import re
 from datetime import date, datetime
@@ -655,6 +657,23 @@ def export_builds_excel(table, label):
     return buf.getvalue()
 
 
+EXCEL_ICON = ('<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">'
+              '<rect x="7" y="2" width="15" height="20" rx="2" fill="#21A366"/>'
+              '<rect x="14" y="2" width="8" height="20" rx="2" fill="#33C481"/>'
+              '<rect x="2" y="6" width="12" height="12" rx="2" fill="#107C41"/>'
+              '<path d="M5 9l2.2 3L5 15h1.7l1.3-2 1.3 2H11l-2.2-3L11 9H9.3L8 11 6.7 9z" fill="#fff"/></svg>')
+
+
+def _excel_link(data, file_name, label, tip):
+    """A right-aligned 'Excel' download link (a plain link, so it can carry the Excel icon)."""
+    b64 = base64.b64encode(data).decode()
+    mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return (f'<div style="text-align:right"><a download="{html.escape(file_name)}" title="{html.escape(tip)}" '
+            f'href="data:{mime};base64,{b64}" style="display:inline-flex;align-items:center;gap:8px;'
+            f'padding:7px 14px;border:1px solid rgba(128,128,128,.35);border-radius:8px;text-decoration:none;'
+            f'color:inherit;font-weight:500;white-space:nowrap">{EXCEL_ICON}{html.escape(label)}</a></div>')
+
+
 def export_all_builds_excel(builds, raines):
     """Every build to date: a Summary sheet, all company builds, and the Raines builds."""
     from openpyxl import Workbook
@@ -808,11 +827,6 @@ def _builds_editor(builds, frame, key, label):
                        key=f"builds_download_{key}")
 
 
-SHOW_OPTIONS = {
-    "Everything": "every checklist item",
-    "Still to build": "only items not yet ticked in the Built column",
-    "Still to QC": "only items not yet ticked in the QC column",
-}
 
 
 def _render_build_checklist(builds, checks):
@@ -861,10 +875,6 @@ def _render_build_checklist(builds, checks):
     st.caption("★ = key items. Tick N/A for items that don't apply to this client. "
                "Built By, QC By and the statuses can be changed at the bottom.")
 
-    show = st.radio("Show", list(SHOW_OPTIONS), horizontal=True, key="chk_show",
-                    captions=None, help="Everything: the full checklist. Still to build: hides items already "
-                    "ticked as Built. Still to QC: hides items already ticked as QC. Items marked N/A are hidden "
-                    "in the last two. If nothing is ticked yet, all three look the same.")
     saved = {r.item_id: r for r in checks[checks.build_id == build_id].itertuples()}
 
     changes = {}
@@ -880,12 +890,6 @@ def _render_build_checklist(builds, checks):
         sec_app = int((~df["N/A"]).sum())
         sec_built = int((df.Built & ~df["N/A"]).sum())
         sec_qc = int((df.QC & ~df["N/A"]).sum())
-        if show == "Still to build":
-            df = df[~df.Built & ~df["N/A"]]
-        elif show == "Still to QC":
-            df = df[~df.QC & ~df["N/A"]]
-        if df.empty:
-            continue
         done = "✅ " if sec_app and sec_built == sec_app and sec_qc == sec_app else ""
         with st.expander(f"{done}{section}  —  Built {sec_built}/{sec_app} · QC {sec_qc}/{sec_app}"):
             if note:
@@ -897,13 +901,13 @@ def _render_build_checklist(builds, checks):
             t1, t2, _ = st.columns([1, 1, 4])
             for col, field, label in ((t1, "Built", "Tick all Built"), (t2, "QC", "Tick all QC")):
                 all_now = bool(applicable.any() and view.loc[applicable, field].all())
-                want = col.checkbox(label, value=all_now, key=f"chk_all{field}_{build_id}_{si}_{show}",
+                want = col.checkbox(label, value=all_now, key=f"chk_all{field}_{build_id}_{si}",
                                     help=f"Ticks {field} for every item in this section (not N/A ones). "
                                          "Untick to clear them all. Remember to Save.")
                 if want != all_now:
                     view.loc[applicable, field] = want
             ed = st.data_editor(
-                view, key=f"chk_{build_id}_{si}_{show}", hide_index=True, width="stretch",
+                view, key=f"chk_{build_id}_{si}", hide_index=True, width="stretch",
                 num_rows="fixed", disabled=["Area", "Item"],
                 column_config={"item_id": None,
                                "Area": st.column_config.TextColumn("Area", width=200),
@@ -1113,7 +1117,14 @@ def _render_overview(builds):
     first = f"{months[0]:%B %Y}" if months else ""
     this_month = int((dated.month == month_start(today_local())).sum())
 
-    st.subheader(f"All builds · {first} to date" if first else "All builds")
+    h1, h2 = st.columns([3, 1], vertical_alignment="center")
+    h1.subheader(f"All builds · {first} to date" if first else "All builds")
+    h2.markdown(_excel_link(export_all_builds_excel(df, raines),
+                            f"Company_Builds_All_to_{today_local():%Y-%m-%d}.xlsx",
+                            "Download Excel",
+                            f"All {total:,} builds to date: Summary, every company build (all months) "
+                            "and the Raines builds, one sheet each"),
+                unsafe_allow_html=True)
     m = st.columns(6)
     m[0].metric("Total builds", f"{total:,}", help=f"Includes the {n_raines} Raines builds")
     m[1].metric("Completed", f"{n_done:,}", help=f"Includes the {n_raines} Raines builds")
@@ -1126,12 +1137,6 @@ def _render_overview(builds):
     p2.progress(qc_done.sum() / done.sum() if done.sum() else 0.0,
                 text=f"QC completed: {qc_done.sum() / done.sum():.0%} of completed builds (not counting Raines)"
                 if done.sum() else "QC")
-    st.download_button(f"📥 Download all builds to date (Excel · {total:,} builds)",
-                       data=export_all_builds_excel(df, raines),
-                       file_name=f"Company_Builds_All_to_{today_local():%Y-%m-%d}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                       key="all_builds_download",
-                       help="Summary, every company build (all months) and the Raines builds, one sheet each")
 
     if not months:
         st.info("Add due dates to builds to see the monthly chart.")
