@@ -209,233 +209,284 @@ BUILD_FIELDS = {  # column shown in the tracker -> database field, in the order 
 }
 PROPER_CASE_FIELDS = ("company_name", "hierarchy", "built_by", "assigned_by", "qc_by")
 PERSON_FIELDS = ("built_by", "assigned_by", "qc_by")
-# 2025 Implementation Checklist - Direct Sales Clients.
-# (section, note shown under the section, [(sub-heading, [items])]); "★ " marks key items
-# (highlighted green on the QC page). Add new items at the END of a section so saved ticks stay aligned.
+# Implementation Checklist - Direct Sales Clients (updated Nov 2026: the new checklist merged with the
+# first version, keeping the more detailed wording where both had the same step).
+# (section, note shown under the section, [(sub-heading, [(item id, item text)])]); "★ " marks key items.
+# Saved ticks and comments are stored by item id, so:
+#   - never change or reuse an id; to reword an item, keep its id and change only the text
+#   - give a new item a new id (next free N-number); a removed item's id is simply left unused
+# Ids like "S01-05" come from the first version of the checklist, so builds ticked then keep their ticks.
 CHECKLIST = [
     ("Salesforce - Details", "", [
-        ("Details page", ["Under the Account Information section, change Account Record Type from Prospect to Client"]),
-        ("Account Financial Status", ["★ Enter Average Payroll Amount (enter 0.00 until Proof of DD is received, then update)"]),
         ("Account Information", [
-            "Verify Account Name matches Legal Name on PIN (if not, update it so it matches)",
-            "If Copy Company, verify account is tied to Parent Account",
-            "Enter DBA Name (if applicable)",
-            "Add Company Code to Client Company Code field",
-            "Verify Federal ID matches PIN",
-            "Update Phone Number (if applicable)",
-            "Change TYPE from Prospect to Netchex Client",
-            "Choose Pricing Model (PEPM or Legacy)",
-            "Choose Package (Core, Complete, Legacy) – if PEPM, leave blank",
-            "Choose Yes/No for Distributed Invoicing",
-            "Choose Yes/No for Seasonal Client",
-            "★ Check Currently in Implementation",
+            ("S01-01", "Under the Account Information section, change Account Record Type from Prospect to Client Account"),
+            ("S01-04", "If Copy Company: verify account is tied to Parent Account"),
+            ("S01-03", "Verify Account Name matches legal name on PIN (if not, update it so it matches)"),
+            ("S01-05", "Enter DBA Name (if applicable)"),
+            ("S01-06", "Add Company Code to Client Company Code field"),
+            ("S01-07", "★ Verify Federal ID matches PIN"),
+            ("S01-08", "Update Phone Number (if applicable)"),
+            ("S01-09", "Change TYPE from Prospect to Netchex Client"),
+            ("S01-10", "Choose Pricing Model — PEPM or Legacy"),
+            ("S01-11", "Choose Package (Core, Complete, Legacy) — leave blank if PEPM"),
+            ("S01-12", "Choose Yes/No for Distributed Invoicing"),
+            ("S01-13", "Choose Yes/No for Seasonal Client"),
+            ("S01-14", "★ Check Currently in Implementation box"),
         ]),
-        ("Address Information", ["Enter Shipping Address"]),
+        ("Account Financial Status", [
+            ("S01-02", "★ Enter Average Payroll Amount (enter 0.00 until Proof of DD received; update once proof is on file)"),
+        ]),
+        ("Address Information", [("S01-15", "Enter Shipping Address")]),
         ("Designated Points of Contact", [
-            "★ Select Payroll Contact",
-            "★ Select Tax Contact",
-            "★ Select Billing/ACH Contact",
-            "★ Select The Work Number Contact (if TWN is listed on PEPM proposal)",
-            "Select Human Resources Contact (usually same as Work Number Contact)",
-            "Select Benefits Contact (if Benefits is listed on PEPM proposal)",
+            ("S01-16", "★ Select Payroll Contact"),
+            ("S01-17", "★ Select Tax Contact"),
+            ("S01-18", "★ Select Billing/ACH Contact"),
+            ("S01-19", "★ Select The Work Number Contact (only if TWN is on PEPM proposal)"),
+            ("S01-20", "Select Human Resources Contact (usually same as Work Number Contact)"),
+            ("S01-21", "Select Benefits Contact (only if Benefits is on PEPM proposal)"),
         ]),
         ("Client Information", [
-            "Enter the Netchex Annual Revenue (monthly total on PEPM proposal × 12)",
-            "Check AZ/HI Daylight Savings Time (if client is in Arizona or Hawaii)",
+            ("S01-22", "Enter Netchex Annual Revenue (monthly PEPM total x 12)"),
+            ("S01-23", "Check AZ/HI Daylight Savings Time (only if client is in Arizona or Hawaii)"),
         ]),
         ("Implementation Details", [
-            "★ Select Yes or No for Direct Deposit Waiting Period Required",
-            "★ Select Proof of Direct Deposit Received (once proof of DD is received)",
+            ("S01-24", "★ Select Yes or No for Direct Deposit Waiting Period Required"),
+            ("S01-25", "★ Select Proof of Direct Deposit Received (once proof is on file)"),
         ]),
         ("Employer Services Information", [
-            "Update Primary Payroll Frequency",
-            "Update Secondary Payroll Frequency (if applicable)",
-            "Verify Client's Payroll Vendor is populated and correct",
-            "401k Offered – Yes or No",
-            "If yes, enter Current 401k Plan Provider (if applicable)",
+            ("S01-26", "Update Primary Payroll Frequency"),
+            ("S01-27", "Update Secondary Payroll Frequency (if applicable)"),
+            ("S01-28", "Verify client's Payroll Vendor is populated and correct"),
+            ("S01-29", "401k Offered — Yes or No"),
+            ("S01-30", "If Yes: enter Current 401k Plan Provider (if applicable)"),
         ]),
     ]),
     ("Salesforce - Contacts", "", [
         ("Contacts", [
-            "Add/Update all Contacts (First Name, Last Name, Title, Phone Number, Email)",
-            "Check Able to Request User Access within the contact (ONLY if the user is on the Client Admin Form)",
+            ("S02-01", "Add/Update all Contacts (First Name, Last Name, Title, Phone Number, Email)"),
+            ("S02-02", "Check 'Able to Request User Access' within the contact ONLY if user is on the Client Admin Form"),
         ]),
     ]),
     ("Salesforce - Assets",
-     "Do NOT activate Employee Navigator, NetBenefits, NetEnroll, NetCobra, ACA Central, Carrier Solutions, EDI Feed "
-     "or any forms. Also do NOT activate these HR assets: NetInsight, NetEngage, NetGuide, NetLearn, NetPerform, "
+     "⚠️ Activate PAYROLL assets only. Do NOT activate HR, Benefits or E-Verify assets — those belong to HR Leads / "
+     "Benefit Leads. That includes Employee Navigator, NetBenefits, NetEnroll, NetCobra, ACA Central, Carrier "
+     "Solutions, EDI Feed or any forms, and the HR assets NetInsight, NetEngage, NetGuide, NetLearn, NetPerform, "
      "NetRecruiter, NetScheduler, NetExpense/ExpensePath, Org Charts, Compensation Management, Fillable Forms, "
-     "AskHR+AI or E-Verify. (HR Leads / Benefit Leads activate HR/Benefits assets.)", [
-        ("Assets", ["Activate PAYROLL assets ONLY (see the list of categorized assets)"]),
+     "AskHR+AI and E-Verify.", [
+        ("Assets", [
+            ("N01", "Payroll/Tax"),
+            ("N02", "ESS/MSS"),
+            ("N03", "The Work Number"),
+            ("N04", "Time & Attendance"),
+            ("N05", "EE Engagement/Recognition Portal — Basic/Advanced (Community Core)"),
+        ]),
     ]),
     ("Salesforce - Onboarding Details", "", [
         ("Onboarding Details", [
-            "Select Project Manager (Owner)",
-            "Select Data Specialist",
-            "Select Payroll Onboarding Lead",
-            "Select HR Onboarding Lead",
-            "Select Payroll Survey Contact under Payroll Information",
-            "Select Survey Contact under Client Contacts",
+            ("S04-01", "Select Project Manager (Owner)"),
+            ("S04-02", "Select Data Specialist"),
+            ("S04-03", "Select Payroll Onboarding Lead"),
+            ("S04-04", "Select HR Onboarding Lead"),
+            ("S04-05", "Select Payroll Survey Contact (under Payroll Information)"),
+            ("S04-06", "Select Survey Contact (under Client Contacts)"),
         ]),
     ]),
-    ("Netchex - Tax, Worker's Comp, Job Codes", "", [
+    ("Netchex - Tax Codes, Worker's Comp & Job Codes", "", [
         ("Maint > Payroll > Tax Codes", [
-            "Update or add State and SUTA Tax Codes",
-            "Update or add Local Tax Codes (if applicable)",
+            ("S05-01", "Update or Add State Tax Codes"),
+            ("N06", "Update or Add SUTA Tax Codes"),
+            ("S05-02", "Add Local Tax Codes (if applicable)"),
         ]),
-        ("Maint > Payroll > Workers Compensation Codes", [
-            "Set up Worker's Comp Codes for each worked-in state built",
-            "Update Worker's Comp Rates (move decimal 2 places to the left if converting the rate)",
+        ("Maint > Payroll > Worker's Compensation Codes", [
+            ("S05-03", "Build Worker's Comp Codes for each worked-in state/WC code combination"),
+            ("S05-04", "Update Worker's Comp Rates (move decimal 2 places left to convert %)"),
         ]),
-        ("Maint > HR > Job Codes", ["Set up Job Codes for each state built"]),
+        ("Maint > HR > Job Codes", [
+            ("S05-05", "Build Hourly Job Code for each state/WC code combination"),
+            ("N07", "Build Salary Job Code for each state/WC code combination"),
+        ]),
     ]),
-    ("Netchex - Widgets, TWN", "", [
+    ("Netchex - Widgets & The Work Number", "", [
         ("Maint > HR > Dashboard Configuration > Add/Remove Widgets", [
-            "My Profile", "Company Directory", "My Pay", "People", "Favorite Reports",
-            "My Accrual Attendance", "Calendar", "Company Info", "Employee Search", "Payroll",
-            "NetGuide (ONLY if on proposal – activate in System Claims first, then add widget)",
+            ("S06-01", "My Profile"),
+            ("S06-02", "Company Directory"),
+            ("S06-03", "My Pay"),
+            ("S06-04", "People"),
+            ("S06-05", "Favorite Reports"),
+            ("S06-06", "My Accrual Attendance"),
+            ("S06-07", "Calendar"),
+            ("S06-08", "Company Info"),
+            ("S06-09", "Employee Search"),
+            ("S06-10", "Payroll"),
+            ("S06-11", "NetGuide (ONLY if on proposal — activate in System Claims first, then add widget)"),
         ]),
-        ("Reports > File Feeds", ["Set up The Work Number"]),
+        ("Reports > File Feeds", [
+            ("S06-12", "Set up The Work Number (Company Info + Client Contact + Partner Contact — Rene Roy)"),
+        ]),
     ]),
     ("Netchex - Client Billing",
-     "Fee - Premium (negative amounts, Base / Per Check): Weekly -18.00 / -1.35 · Bi-Weekly -23.00 / -2.10 · "
-     "Semi-Monthly -23.00 / -2.10 · Monthly -43.00 / -3.65. Premium Pay steps can only be done once "
-     "Netchex Premium Pay Client is checked in System Tables.", [
+     "Fee – Premium negative amounts: Weekly: Base -$18.00, Per Check -$1.35 · Bi-Weekly/Semi-Monthly: "
+     "Base -$23.00, Per Check -$2.10 · Monthly: Base -$43.00, Per Check -$3.65. Premium Pay steps can only be done "
+     "once Netchex Premium Pay Client is checked in System Tables.", [
         ("Back Office > Enterprise > Client Billing Schedule", [
-            "Choose Payroll Frequency",
-            "Check Sales Tax box if Texas company",
-            "Choose Sales Agent",
-            "Choose Payroll Coordinator (Project Lead)",
-            "Choose Sales Tax Code (if TX, choose Dallas 8.25%)",
-            "In Fee - Premium, enter the appropriate negative amounts in Base and Per Check",
+            ("S07-01", "Choose Payroll Frequency"),
+            ("S07-02", "Check Sales Tax Box (Texas companies only)"),
+            ("S07-03", "Choose Sales Agent — Addie Kelley"),
+            ("S07-04", "Choose Payroll Coordinator (Project Lead)"),
+            ("S07-05", "Choose Sales Tax Code (TX = Dallas 8.25%; all others = State Sales Tax)"),
+            ("S07-06", "★ Enter Fee – Premium negative amounts (Base + Per Check) based on pay frequency"),
         ]),
         ("Premium Pay clients only", [
-            "Check Premium Pay",
-            "Uncheck Money Movement",
-            "Zero out $25.00 Stop Payment Fee",
+            ("S07-07", "Check Premium Pay"),
+            ("S07-08", "Uncheck Money Movement"),
+            ("S07-09", "Zero out $25.00 Stop Payment Fee"),
         ]),
-        ("Maint > Company Structure > Client Billing View", ["View the Client Billing View to ensure accuracy"]),
+        ("Maint > Company Structure > Client Billing View", [
+            ("S07-10", "View Client Billing View to confirm accuracy — no errors showing"),
+        ]),
     ]),
-    ("Netchex - Company Information (FKA System Tables)", "", [
+    ("Netchex - Company Information (System Tables)", "", [
         ("Company Demographic Information", [
-            "Verify Trade Name and W2 Name, Federal ID and Address match PIN",
-            "Enter Client Phone Number",
-            "Add Client Email Address",
+            ("S08-01", "★ Verify Company Name (Trade Name and W2 Name), Federal ID, and Address match the PIN (ALL CAPS)"),
+            ("S08-02", "Enter Client Phone Number"),
+            ("S08-03", "Add Client Email Address"),
         ]),
         ("Banking Information", [
-            "Verify Banking Information – Routing & Account Numbers",
-            "Enter PIN under ACH Contact – PIN #",
-            "Check Minimum Wage Makeup if Restaurant/Hotel",
+            ("S08-04", "★ Verify Banking Information — Routing & Account Numbers"),
+            ("S08-05", "★ Enter EFTPS PIN under ACH Contact field"),
+            ("S08-06", "Check Minimum Wage Makeup if Restaurant or Hotel"),
         ]),
         ("Payroll Information", [
-            "Confirm Minimum Wage $ Amount",
-            "Update Default Payroll Group",
-            "Update Default Job Code",
-            "Populate Units/Pay Period",
-            "Change Default Employee Classification to W-2 Tipped if Restaurant/Hotel",
-            "Check Allow Manager Self Service (if ESS/MSS is listed on proposal)",
-            "Check Netchex Premium Pay Client? (Premium Pay clients only – see Billing)",
+            ("S08-07", "Confirm Minimum Wage $ Amount"),
+            ("S08-08", "Update Default Payroll Group"),
+            ("S08-09", "Update Default Job Code"),
+            ("S08-10", "Populate Units/Pay Period"),
+            ("S08-11", "Change Default Employee Classification to W-2 Tipped if Restaurant/Hotel"),
+            ("S08-12", "Check Allow Manager Self Service (only if ESS/MSS is on proposal)"),
+            ("S08-13", "PREMIUM PAY CLIENTS ONLY: Check the Netchex Premium Pay Client box (see Client Billing)"),
         ]),
-        ("Claims – activate products based on PEPM proposal", [
-            "NetRecruiter", "NetGuide", "Fillable Forms", "NetPerform", "NetScheduler",
-            "Engagement Basic (activate for ALL clients – has feature flags)",
-            "Engagement Core", "Engagement Advanced",
+        ("Direct Deposit", [
+            ("N08", "★ Direct Deposit Effective Date — enter onboarding start date (bypassing 90-day) "
+                    "or 90 days post 1st check date"),
+            ("N09", "Opt-Out — check ONLY if client will use live checks only (no DD at all)"),
+        ]),
+    ]),
+    ("Netchex - Claims (activate based on PEPM proposal)", "", [
+        ("Claims", [
+            ("N10", "Organization Chart (if on proposal)"),
+            ("N11", "Onboarding and Workflows (if on proposal)"),
+            ("S08-17", "Performance / NetPerform (if on proposal)"),
+            ("S08-14", "Recruit - HigherMe / NetRecruiter (if on proposal)"),
+            ("S08-18", "NetScheduler (if on proposal)"),
+            ("S08-15", "NetGuide (if on proposal)"),
+            ("S08-16", "Fillable Forms (if on proposal)"),
+            ("S08-19", "Engagement Basic (activate for ALL clients — has feature flags)"),
+            ("S08-20", "Engagement Core (if on proposal)"),
+            ("S08-21", "Engagement Advanced (if on proposal)"),
         ]),
     ]),
     ("Netchex - Feature Flags", "", [
         ("Maint > Security > New Feature Access", [
-            "Activate Feature Flags based on products listed on PEPM proposal",
-            "Activate Employee Engagement Basic (Community Basic) for ALL clients",
-            "(Post 1st payroll) Activate Earned Wage Access for clients using T&A only",
-            "Earned Wage Access: Product Suite > Earned Wage Access, activate the slider for the company",
-            "Activate QBO (ONLY for QBO Integration clients)",
+            ("S09-01", "Add feature flags according to the company claims enabled in Company Info page "
+                       "(products listed on PEPM proposal)"),
+            ("S09-02", "Activate Employee Engagement Basic (Community Basic) for ALL clients"),
+            ("S09-03", "(Post 1st payroll) Activate Earned Wage Access for clients using T&A only"),
+            ("S09-04", "Earned Wage Access: Product Suite > Earned Wage Access, activate the slider for the company"),
+            ("S09-05", "Activate QBO (ONLY for QBO Integration clients)"),
         ]),
     ]),
-    ("Netchex - Department Structure, Payroll Maintenance",
-     "Payroll Group hours: Weekly 40 · Bi-Weekly 80 · Semi-Monthly 86.6667 · Monthly 173.3334.", [
+    ("Netchex - Department Structure & Payroll Maintenance",
+     "Payroll Group hours: Weekly = 40 · Bi-Weekly = 80 · Semi-Monthly = 86.6667 · Monthly = 173.3334", [
         ("Maint > More > Company Structure", [
-            "Set up Div/BU/Dept structure",
-            "Hide Main Department",
-            "Set up Locations (all physical work locations)",
+            ("S10-01", "Set up Div/Business Unit/Department Structure"),
+            ("S10-02", "Hide Main Department (000 — never delete)"),
+            ("S10-03", "Set up Locations (all physical work locations)"),
         ]),
-        ("Maint > HR", ["Set up Positions (mandatory – if client gives none, mimic departments)"]),
+        ("Maint > HR", [
+            ("S10-04", "Set up Positions (mandatory — mimic departments if client does not provide positions)"),
+        ]),
         ("Payroll > Utilities", [
-            "Build Payroll Schedule(s)",
-            "Verify Payroll Schedule with client after building",
-            "Close the Year",
-            "Add Company Note (PEPM Package or PEPM - New Proposal + Initials // DD Waiting Period)",
-            "Build Payroll Groups",
+            ("S10-05", "★ Build Payroll Schedule(s)"),
+            ("S10-06", "Verify Payroll Schedule with client after building"),
+            ("S10-07", "★ Close the Year"),
+            ("S10-08", "Add Company Note — PEPM Package/New Proposal + initials"),
+            ("N13", "Add Company Note — DD Waiting Period (if applicable)"),
+            ("S10-09", "Build Payroll Groups (Hourly + Salary for each frequency used)"),
+            ("N14", "Delete unused default payroll groups (e.g., remove Bi-Weekly if not applicable)"),
         ]),
     ]),
     ("Netchex - Payroll Codes & General Ledger", "", [
         ("Payroll Codes & GL", [
-            "Update/Add Deduction & Earning Codes",
-            "Delete unused Earning/Deduction Codes",
-            "Build GL Base Account for each Earning/Deduction/Tax built",
-            "Map GL Base Accounts",
+            ("S11-01", "Update / Add Deduction Codes"),
+            ("N15", "Update / Add Earnings Codes"),
+            ("S11-02", "Delete unused Earnings/Deduction Codes"),
+            ("S11-03", "Build GL Base Account for each Earnings/Deduction/Tax code"),
+            ("S11-04", "★ Map GL Base Accounts — Deductions, Earnings, and Taxes tabs (no unmapped codes)"),
         ]),
     ]),
     ("Netchex - Maintenance & Report Runner",
      "Shipping: Zone 2 $31 · Zone 3 $36.50 · Zone 4 $44 · Zone 5 $47 · Zone 6 $48 · Zone 7 $52.50 · "
      "Zone 8 $55 · Garnishments $1.25.", [
         ("Maint > HR > Email/Text Event Configuration", [
-            "List client as \"To:\" recipient for Payroll Invoiced",
-            "List client and project lead as \"To:\" recipients for Payroll Submitted",
-            "List client and project lead as \"To:\" recipients for Wire Transfer Initiated",
-            "List client and project lead as \"To:\" recipients for Wire Transfer Received",
+            ("S12-01", "Payroll Invoiced — list client as To: recipient"),
+            ("S12-02", "Payroll Submitted — list client and Project Lead as To: recipients"),
+            ("S12-03", "Wire Transfer Initiated — list client and Project Lead as To: recipients"),
+            ("S12-04", "Wire Transfer Received — list client and Project Lead as To: recipients"),
         ]),
         ("Maint > HR", [
-            "Set up Shipping Information",
-            "Update Shipping Contact",
-            "Update Payroll Contact",
-            "Update W-2 Contact",
+            ("S12-05", "Set up Shipping Information (correct zone fee, notes, garnishments)"),
+            ("S12-06", "Add Payroll and Shipping Contacts (physical address — no PO Box)"),
+            ("S12-08", "Add W-2 Contact"),
         ]),
         ("Maint > System Tables > Company Structure", [
-            "Enter Check Header",
-            "Check box Details 1, 3, 6, 7",
-            "Premium Pay only: add \"(C/O Netchex Payroll)\" to the second line of the Check Header",
+            ("S12-09", "Enter Check Header (Fields 1, 2, 3)"),
+            ("S12-10", "Check Box Details 1, 3, 6, 7 (Dept Info, Accrual Info, Saved Signature, Employer Ded. Amounts)"),
+            ("S12-11", "Premium Pay only: add \"(C/O Netchex Payroll)\" to the second line of the Check Header"),
         ]),
-        ("Back Office > More > RR", ["Assign company to Report Runner"]),
+        ("Back Office > More > RR", [("S12-12", "Assign company to Report Runner")]),
     ]),
-    ("Netchex - Time and Attendance", "", [
-        ("T&A > More > Settings > Web Terminal Setup", ["Web Terminal Setup"]),
+    ("Netchex - Time & Attendance", "", [
+        ("T&A > More > Settings > Web Terminal Setup", [
+            ("S13-01", "Build Web Terminal (Time Clock or Time Sheet — enable/disable per client)"),
+        ]),
         ("T&A > Company Rules", [
-            "Set up Payroll Group Rules",
-            "Shift Setup",
-            "Terminal Group Setup",
-            "Add Employees to Terminal Group",
+            ("S13-02", "Set up Payroll Group Rules (all payroll groups)"),
+            ("S13-03", "Shift Setup — OT > 40 on all hourly groups; remove OT from Salary Exempt groups"),
+            ("S13-04", "Terminal Group Setup — link Terminal Group to Web Terminal"),
+            ("S13-05", "Add Employees to Terminal Group"),
         ]),
     ]),
-    ("Salesforce - Cases", "", [
+    ("Salesforce - Cases", "⚠️ All cases below must be created after every shell build without exception.", [
         ("Cases", [
-            "Pre-Note Case – let flow to Prenote Queue",
-            "Tax Case – assign to your Tax Rep (I'Neka Martin or James Brunson)",
-            "User Access Case – let flow to User Access Queue",
-            "Signature Case – assign to Macy, Jessica D or Jamie",
-            "E-Verify Case (if on proposal) – assign to your HR Lead",
-            "Pay Card Case (if client is interested in Pay Cards)",
+            ("S14-01", "★ Pre-Note Case — let flow to Prenote Queue"),
+            ("S14-02", "★ Tax Case — assign to your Tax Rep (I'Neka Martin or James Brunson)"),
+            ("S14-03", "★ User Access Case — assign to your HR Lead"),
+            ("S14-04", "Signature Case — assign to Macy, Jessica D or Jamie"),
+            ("S14-05", "E-Verify Case — assign to your HR Lead (only if on proposal)"),
+            ("S14-06", "Pay Card Case (only if client is interested in Pay Cards)"),
         ]),
     ]),
     ("GuideCX", "", [
-        ("GuideCX", ["Update completed tasks accordingly"]),
+        ("GuideCX", [("S15-01", "Update completed tasks accordingly")]),
     ]),
 ]
 
 
 def _checklist_items():
-    items = []
-    for si, (section, _note, groups) in enumerate(CHECKLIST, 1):
-        n = 0
-        for sub, texts in groups:
-            for text in texts:
-                n += 1
+    items, seen = [], set()
+    for section, _note, groups in CHECKLIST:
+        for sub, entries in groups:
+            for item_id, text in entries:
+                assert item_id not in seen, f"Duplicate checklist id {item_id}"
+                seen.add(item_id)
                 key = text.startswith("★ ")
-                items.append({"id": f"S{si:02d}-{n:02d}", "section": section, "sub": sub,
+                items.append({"id": item_id, "section": section, "sub": sub,
                               "item": text[2:] if key else text, "key": key})
     return items
 
 
 CHECK_ITEMS = _checklist_items()
+CHECK_ITEM_IDS = {it["id"] for it in CHECK_ITEMS}
 
 
 def _to_date(v):
@@ -581,7 +632,7 @@ def save_build_checks(rows):
 
 
 def _progress(checks, build_id):
-    c = checks[checks.build_id == build_id]
+    c = checks[(checks.build_id == build_id) & checks.item_id.isin(CHECK_ITEM_IDS)]   # ignore removed items
     na = int(c.na.sum())
     applicable = len(CHECK_ITEMS) - na
     return int((c.built & ~c.na).sum()), int((c.qc & ~c.na).sum()), applicable
