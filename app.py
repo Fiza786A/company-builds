@@ -943,11 +943,14 @@ def _render_build_checklist(builds, checks):
                          "Built": bool(s.built) if s else False, "QC": bool(s.qc) if s else False,
                          "N/A": bool(s.na) if s else False, "Comments": (txt(s.comments) if s else "")})
         df = pd.DataFrame(rows)
+        df["Note"] = df.Comments.map(lambda c: "🔴" if c else "")    # red dot on rows that have a saved comment
+        n_notes = int((df.Comments != "").sum())
         sec_app = int((~df["N/A"]).sum())
         sec_built = int((df.Built & ~df["N/A"]).sum())
         sec_qc = int((df.QC & ~df["N/A"]).sum())
         done = "✅ " if sec_app and sec_built == sec_app and sec_qc == sec_app else ""
-        with st.expander(f"{done}{section}  —  Built {sec_built}/{sec_app} · QC {sec_qc}/{sec_app}"):
+        notes = f"  ·  🔴 {n_notes} comment{'s' if n_notes != 1 else ''}" if n_notes else ""
+        with st.expander(f"{done}{section}  —  Built {sec_built}/{sec_app} · QC {sec_qc}/{sec_app}{notes}"):
             if note:
                 st.caption(note)
             # Tick (or untick) every item in this section at once. Items marked N/A are left alone.
@@ -964,7 +967,7 @@ def _render_build_checklist(builds, checks):
                     view.loc[applicable, field] = want
             ed = st.data_editor(
                 view, key=f"chk_{build_id}_{si}", hide_index=True, width="stretch",
-                num_rows="fixed", disabled=["Area", "Item"],
+                num_rows="fixed", disabled=["Area", "Item", "Note"],
                 column_config={"item_id": None,
                                "Area": st.column_config.TextColumn("Area", width=200),
                                "Item": st.column_config.TextColumn("Item", width=520),
@@ -972,7 +975,9 @@ def _render_build_checklist(builds, checks):
                                "QC": st.column_config.CheckboxColumn("QC", width=60),
                                "Comments": st.column_config.TextColumn("Comments ✏️", width=260,
                                                                        help="Click to add a note for this item"),
-                               "N/A": st.column_config.CheckboxColumn("N/A", width=55)})
+                               "N/A": st.column_config.CheckboxColumn("N/A", width=55),
+                               "Note": st.column_config.TextColumn("💬", width=45,
+                                                                   help="🔴 = this item has a comment")})
             base = df.reset_index(drop=True)
             for i in range(len(ed)):
                 new = (bool(ed.at[i, "Built"]), bool(ed.at[i, "QC"]), bool(ed.at[i, "N/A"]),
