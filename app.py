@@ -829,6 +829,17 @@ def _builds_editor(builds, frame, key, label):
 
 
 
+# Pushes the red "N comments" badge on a checklist section bar to the far right.
+CHECKLIST_CSS = """<style>
+[data-testid="stExpander"] summary:has(.stMarkdownBadge) > span { flex: 1 1 auto; width: 100%; }
+[data-testid="stExpander"] summary:has(.stMarkdownBadge) > span > div { flex: 1 1 auto; min-width: 0; }
+[data-testid="stExpander"] summary:has(.stMarkdownBadge) [data-testid="stMarkdownContainer"] { width: 100%; }
+[data-testid="stExpander"] summary:has(.stMarkdownBadge) [data-testid="stMarkdownContainer"] p {
+    display: flex; align-items: center; gap: 8px; width: 100%; }
+[data-testid="stExpander"] summary .stMarkdownBadge { margin-left: auto; }
+</style>"""
+
+
 def _render_team_overview(builds, people):
     """'All team members': one row per person. Click a row to open that person's page and their checklists."""
     status = builds.status.map(lambda v: _clean_text(v) or "Pending")
@@ -933,6 +944,7 @@ def _render_build_checklist(builds, checks):
 
     saved = {r.item_id: r for r in checks[checks.build_id == build_id].itertuples()}
 
+    st.markdown(CHECKLIST_CSS, unsafe_allow_html=True)
     changes = {}
     for si, (section, note, _groups) in enumerate(CHECKLIST, 1):
         items = [it for it in CHECK_ITEMS if it["section"] == section]
@@ -949,7 +961,8 @@ def _render_build_checklist(builds, checks):
         sec_built = int((df.Built & ~df["N/A"]).sum())
         sec_qc = int((df.QC & ~df["N/A"]).sum())
         done = "✅ " if sec_app and sec_built == sec_app and sec_qc == sec_app else ""
-        notes = f"  ·  🔴 {n_notes} comment{'s' if n_notes != 1 else ''}" if n_notes else ""
+        # Shown as a red badge, pushed to the far right of the section bar by CHECKLIST_CSS.
+        notes = f" :red-badge[🔴 {n_notes} comment{'s' if n_notes != 1 else ''}]" if n_notes else ""
         with st.expander(f"{done}{section}  —  Built {sec_built}/{sec_app} · QC {sec_qc}/{sec_app}{notes}"):
             if note:
                 st.caption(note)
