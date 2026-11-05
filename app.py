@@ -668,10 +668,12 @@ def _excel_link(data, file_name, label, tip):
     """A right-aligned 'Excel' download link (a plain link, so it can carry the Excel icon)."""
     b64 = base64.b64encode(data).decode()
     mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    return (f'<div style="text-align:right"><a download="{html.escape(file_name)}" title="{html.escape(tip)}" '
-            f'href="data:{mime};base64,{b64}" style="display:inline-flex;align-items:center;gap:8px;'
-            f'padding:7px 14px;border:1px solid rgba(128,128,128,.35);border-radius:8px;text-decoration:none;'
-            f'color:inherit;font-weight:500;white-space:nowrap">{EXCEL_ICON}{html.escape(label)}</a></div>')
+    icon = EXCEL_ICON.replace('width="22" height="22"', 'width="15" height="15"')
+    return (f'<div style="text-align:right;margin-top:-14px"><a download="{html.escape(file_name)}" '
+            f'title="{html.escape(tip)}" href="data:{mime};base64,{b64}" style="display:inline-flex;'
+            f'align-items:center;gap:6px;padding:3px 10px;font-size:0.8rem;border:1px solid rgba(128,128,128,.35);'
+            f'border-radius:6px;text-decoration:none;color:inherit;font-weight:500;white-space:nowrap">'
+            f'{icon}{html.escape(label)}</a></div>')
 
 
 def export_all_builds_excel(builds, raines):
@@ -885,7 +887,7 @@ def _render_build_checklist(builds, checks):
             s = saved.get(it["id"])
             rows.append({"item_id": it["id"], "Area": it["sub"], "Item": ("★ " if it["key"] else "") + it["item"],
                          "Built": bool(s.built) if s else False, "QC": bool(s.qc) if s else False,
-                         "Comments": (txt(s.comments) if s else ""), "N/A": bool(s.na) if s else False})
+                         "N/A": bool(s.na) if s else False, "Comments": (txt(s.comments) if s else "")})
         df = pd.DataFrame(rows)
         sec_app = int((~df["N/A"]).sum())
         sec_built = int((df.Built & ~df["N/A"]).sum())
