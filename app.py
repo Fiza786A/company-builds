@@ -200,10 +200,11 @@ PAYROLL_LEADS = ["Chelsi", "Dakota", "Jessikah", "Kristin", "Lauren", "Macy", "T
 BUILD_COLS = ["id", "company_name", "company_code", "hierarchy", "status", "completion_date",
               "due_date", "built_by", "assigned_by", "qc_by", "qc_status"]
 CHECK_COLS = ["build_id", "item_id", "built", "qc", "na", "comments"]
-BUILD_FIELDS = {  # column shown in the tracker -> database field
+BUILD_FIELDS = {  # column shown in the tracker -> database field, in the order the tables show them
     "Company Name": "company_name", "Company Code": "company_code", "Hierarchy": "hierarchy",
-    "Status": "status", "Date of Completion": "completion_date", "Due Date": "due_date",
-    "Built By": "built_by", "Assigned By": "assigned_by", "QC": "qc_by", "QC Status": "qc_status",
+    "Status": "status", "QC Status": "qc_status",          # the two statuses side by side
+    "Built By": "built_by", "QC": "qc_by",                  # then who did each, in the same order
+    "Assigned By": "assigned_by", "Due Date": "due_date", "Date of Completion": "completion_date",
 }
 PROPER_CASE_FIELDS = ("company_name", "hierarchy", "built_by", "assigned_by", "qc_by")
 PERSON_FIELDS = ("built_by", "assigned_by", "qc_by")
@@ -727,6 +728,42 @@ def _month_frame(builds, choice):
     return builds[in_month | no_due]
 
 
+def _filter_builds(table, key):
+    """A row of filters above a builds table: search by name/code, and pick statuses or people.
+    Empty filters show everything. Returns only the matching rows."""
+    def people_in(col):
+        return sorted({p for v in table[col] for p in _people(v)})
+
+    c = st.columns([2, 1, 1, 1, 1, 1])
+    q = c[0].text_input("🔎 Search", key=f"flt_q_{key}", placeholder="Company name or code")
+    picks = {
+        "Status": c[1].multiselect("Status", BUILD_STATUSES, key=f"flt_st_{key}", format_func=STATUS_LABEL.get,
+                                   placeholder="All"),
+        "QC Status": c[2].multiselect("QC Status", BUILD_STATUSES, key=f"flt_qs_{key}",
+                                      format_func=STATUS_LABEL.get, placeholder="All"),
+        "Built By": c[3].multiselect("Built By", people_in("Built By"), key=f"flt_bb_{key}", placeholder="All"),
+        "QC": c[4].multiselect("QC", people_in("QC"), key=f"flt_qb_{key}", placeholder="All"),
+        "Assigned By": c[5].multiselect("Assigned By", people_in("Assigned By"), key=f"flt_ab_{key}",
+                                        placeholder="All"),
+    }
+    keep = pd.Series(True, index=table.index)
+    if q.strip():
+        text = q.strip().lower()
+        keep &= table.apply(lambda r: text in str(r["Company Name"] or "").lower()
+                            or text in str(r["Company Code"] or "").lower(), axis=1)
+    for col, chosen in picks.items():
+        if not chosen:
+            continue
+        if col in ("Status", "QC Status"):
+            keep &= table[col].isin(chosen)
+        else:
+            keep &= table[col].map(lambda v: any(p in chosen for p in _people(v)))
+    if not keep.all():
+        st.caption(f"Showing {int(keep.sum())} of {len(table)} builds (filters on). "
+                   "New builds you add here are saved even if they don't match the filters.")
+    return table[keep].reset_index(drop=True)     # a plain 0..n index, so adding rows still works
+
+
 def _builds_editor(builds, frame, key, label):
     """Editable builds table: click a cell to edit, add a row at the bottom, or select rows and delete them.
     Edits and new rows save automatically; deleting asks for confirmation first."""
@@ -734,6 +771,7 @@ def _builds_editor(builds, frame, key, label):
     st.caption("Click a cell to edit; changes save automatically. Add a build in the empty row at the bottom, "
                "starting with the Company Name. To delete, tick the box at the left of a row and click 🗑️.")
     table = _builds_table(frame)
+    table = _filter_builds(table, key)
 
     def with_extras(base, *cols):
         """Dropdown choices: the standard list, plus any other names already saved (e.g. older builds)."""
@@ -749,7 +787,7 @@ def _builds_editor(builds, frame, key, label):
         height=min(35 * len(table) + 75, 700),
         column_config={
             "id": None,
-            "Company Name": st.column_config.TextColumn("Company Name", width=220, required=True),
+            "Company Name": st.column_config.TextColumn("Company Name", width=220, required=True, pinned=True),
             "Company Code": st.column_config.TextColumn("Company Code", width=115,
                                                         help="Enter after you create the company"),
             "Hierarchy": st.column_config.TextColumn("Hierarchy", width=130),
