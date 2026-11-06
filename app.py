@@ -171,6 +171,10 @@ def sqlite_conn():
     cols = [r[1] for r in conn.execute("PRAGMA table_info(build_checks)")]
     if "comments" not in cols:
         conn.execute("ALTER TABLE build_checks ADD COLUMN comments TEXT")
+    bcols = [r[1] for r in conn.execute("PRAGMA table_info(builds)")]
+    for col in ("ua_status", "balance_status"):
+        if col not in bcols:
+            conn.execute(f"ALTER TABLE builds ADD COLUMN {col} TEXT")
     conn.commit()
     return conn
 
@@ -193,17 +197,25 @@ def _fetch_all(table, cols):
 # ─────────────────────────────────────────────────────────────
 NOT_REQUIRED = "Not Required"
 BUILD_STATUSES = ["Pending", "In Progress", "Completed", NOT_REQUIRED]
+WAIT_CLIENT, WAIT_INTERNAL = "Waiting on Client", "Waiting on Internal Resource"
 STATUS_LABEL = {"Pending": "⚪ Pending", "In Progress": "🟡 In Progress", "Completed": "🟢 Completed",
-                NOT_REQUIRED: "⚫ Not Required"}
+                NOT_REQUIRED: "⚫ Not Required", WAIT_CLIENT: "🔵 Waiting on Client",
+                WAIT_INTERNAL: "🟠 Waiting on Internal Resource"}
+# Extra tracking columns: shown and editable in the tables, but NOT counted in any of the totals.
+UA_STATUSES = ["Pending", "In Progress", "Completed", NOT_REQUIRED, WAIT_CLIENT, WAIT_INTERNAL]
+BALANCE_STATUSES = ["Pending", "In Progress", "Completed", WAIT_CLIENT, WAIT_INTERNAL]
+EXTRA_STATUS = {"ua_status": UA_STATUSES, "balance_status": BALANCE_STATUSES}
+EXTRA_COLUMNS = {"enabled": True}   # turns off if the database doesn't have these columns yet
 # Payroll Leads who assign builds (US team). Add names here as needed.
 PAYROLL_LEADS = ["Chelsi", "Dakota", "Jessikah", "Kristin", "Lauren", "Macy", "Tiffany"]
 
 BUILD_COLS = ["id", "company_name", "company_code", "hierarchy", "status", "completion_date",
-              "due_date", "built_by", "assigned_by", "qc_by", "qc_status"]
+              "due_date", "built_by", "assigned_by", "qc_by", "qc_status", "ua_status", "balance_status"]
 CHECK_COLS = ["build_id", "item_id", "built", "qc", "na", "comments"]
 BUILD_FIELDS = {  # column shown in the tracker -> database field, in the order the tables show them
     "Company Name": "company_name", "Company Code": "company_code", "Hierarchy": "hierarchy",
     "Status": "status", "QC Status": "qc_status",          # the two statuses side by side
+    "UA Status": "ua_status", "Balance Status": "balance_status",   # extra tracking, not counted in totals
     "Built By": "built_by", "QC": "qc_by",                  # then who did each, in the same order
     "Assigned By": "assigned_by", "Due Date": "due_date", "Date of Completion": "completion_date",
 }
@@ -521,7 +533,16 @@ def _clean_text(v):
 
 def load_builds():
     if USE_SUPABASE:
-        df = pd.DataFrame(_fetch_all("builds", ",".join(BUILD_COLS)), columns=BUILD_COLS)
+        try:
+            df = pd.DataFrame(_fetch_all("builds", ",".join(BUILD_COLS)), columns=BUILD_COLS)
+            EXTRA_COLUMNS["enabled"] = True
+        except Exception:
+            # Database doesn't have the UA/Balance columns yet: load without them (shown blank, not saved).
+            cols = [c for c in BUILD_COLS if c not in EXTRA_STATUS]
+            df = pd.DataFrame(_fetch_all("builds", ",".join(cols)), columns=cols)
+            for c in EXTRA_STATUS:
+                df[c] = None
+            EXTRA_COLUMNS["enabled"] = False
     else:
         conn = sqlite_conn()
         try:
@@ -536,6 +557,10 @@ def load_builds():
     # A build (or its QC) with no status yet counts as Pending.
     for col in ("status", "qc_status"):
         df[col] = df[col].map(lambda v: v if v in BUILD_STATUSES else "Pending").astype(object)
+    # UA / Balance: blank until someone picks one (no default, since they aren't counted anywhere).
+    for col, allowed in EXTRA_STATUS.items():
+        lookup = {a.lower(): a for a in allowed}
+        df[col] = df[col].map(lambda v: lookup.get(v.strip().lower()) if isinstance(v, str) else None).astype(object)
     for col in PROPER_CASE_FIELDS:
         df[col] = df[col].map(lambda v, p=col in PERSON_FIELDS: proper_case(v, person=p)
                               if isinstance(v, str) else None).astype(object)
@@ -592,8 +617,13 @@ def _db_value(v):
     return v.isoformat() if isinstance(v, date) else v
 
 
+def _db_fields(fields):
+    """Leave out UA/Balance when the database doesn't have those columns yet."""
+    return {k: _db_value(v) for k, v in fields.items() if EXTRA_COLUMNS["enabled"] or k not in EXTRA_STATUS}
+
+
 def insert_builds(rows):
-    rows = [{k: _db_value(v) for k, v in r.items()} for r in rows]
+    rows = [_db_fields(r) for r in rows]
     if USE_SUPABASE:
         get_supabase().table("builds").insert(rows).execute()
         return
@@ -605,7 +635,9 @@ def insert_builds(rows):
 
 
 def update_build(build_id, fields):
-    fields = {k: _db_value(v) for k, v in fields.items()}
+    fields = _db_fields(fields)
+    if not fields:
+        return
     if USE_SUPABASE:
         get_supabase().table("builds").update(fields).eq("id", int(build_id)).execute()
         return
@@ -645,6 +677,7 @@ def _builds_table(frame):
             "id": r.id, "Company Name": r.company_name, "Company Code": r.company_code, "Hierarchy": r.hierarchy,
             "Status": r.status, "Date of Completion": r.completion_date, "Due Date": r.due_date,
             "Built By": r.built_by, "Assigned By": r.assigned_by, "QC": r.qc_by, "QC Status": r.qc_status,
+            "UA Status": r.ua_status, "Balance Status": r.balance_status,
         })
     cols = ["id", *BUILD_FIELDS]
     table = pd.DataFrame(rows, columns=cols)
@@ -787,7 +820,8 @@ def _filter_builds(table, key):
         return sorted({p for v in table[col] for p in _people(v)})
 
     # One clean row: a search bar, a "Filters" button that opens a small panel, and Clear.
-    keys = {"Status": f"flt_st_{key}", "QC Status": f"flt_qs_{key}", "Built By": f"flt_bb_{key}",
+    keys = {"Status": f"flt_st_{key}", "QC Status": f"flt_qs_{key}", "UA Status": f"flt_ua_{key}",
+            "Balance Status": f"flt_bal_{key}", "Built By": f"flt_bb_{key}",
             "QC": f"flt_qb_{key}", "Assigned By": f"flt_ab_{key}"}
     q_key = f"flt_q_{key}"
     n_active = sum(bool(st.session_state.get(k)) for k in keys.values())
@@ -807,6 +841,10 @@ def _filter_builds(table, key):
                                      format_func=STATUS_LABEL.get, placeholder="All"),
             "QC Status": st.multiselect("QC Status", BUILD_STATUSES, key=keys["QC Status"],
                                         format_func=STATUS_LABEL.get, placeholder="All"),
+            "UA Status": st.multiselect("UA Status", UA_STATUSES, key=keys["UA Status"],
+                                        format_func=STATUS_LABEL.get, placeholder="All"),
+            "Balance Status": st.multiselect("Balance Status", BALANCE_STATUSES, key=keys["Balance Status"],
+                                             format_func=STATUS_LABEL.get, placeholder="All"),
             "Built By": st.multiselect("Built By", people_in("Built By"), key=keys["Built By"], placeholder="All"),
             "QC": st.multiselect("QC", people_in("QC"), key=keys["QC"], placeholder="All"),
             "Assigned By": st.multiselect("Assigned By", people_in("Assigned By"), key=keys["Assigned By"],
@@ -822,7 +860,7 @@ def _filter_builds(table, key):
     for col, chosen in picks.items():
         if not chosen:
             continue
-        if col in ("Status", "QC Status"):
+        if col in ("Status", "QC Status", "UA Status", "Balance Status"):
             keep &= table[col].isin(chosen)
         else:
             keep &= table[col].map(lambda v: any(p in chosen for p in _people(v)))
@@ -867,6 +905,12 @@ def _builds_editor(builds, frame, key, label):
             "QC": st.column_config.SelectboxColumn("QC", options=team, width=100),
             "QC Status": st.column_config.SelectboxColumn("QC Status", options=BUILD_STATUSES, width=125,
                                                           format_func=lambda s: STATUS_LABEL.get(s, s)),
+            "UA Status": st.column_config.SelectboxColumn(
+                "UA Status", options=UA_STATUSES, width=150, format_func=lambda s: STATUS_LABEL.get(s, s),
+                help="User Access status. For tracking only, not counted in the totals above"),
+            "Balance Status": st.column_config.SelectboxColumn(
+                "Balance Status", options=BALANCE_STATUSES, width=150, format_func=lambda s: STATUS_LABEL.get(s, s),
+                help="For tracking only, not counted in the totals above"),
         })
 
     originals = {int(r["id"]): r for _, r in table.iterrows()}
@@ -1024,7 +1068,7 @@ def _render_build_checklist(builds, checks):
     st.markdown(f"**{who}'s builds ({len(order)})** · click a row to open its checklist")
     table = _builds_table(order).reset_index(drop=True)
     shown = table.copy()
-    for col in ("Status", "QC Status"):
+    for col in ("Status", "QC Status", "UA Status", "Balance Status"):
         shown[col] = shown[col].map(lambda s: STATUS_LABEL.get(s, s) if s else "")
     event = st.dataframe(
         shown, key=f"chk_table_{who}", hide_index=True, width="stretch", on_select="rerun",
@@ -1595,7 +1639,7 @@ def render_landing_page():
 
 SECTIONS = {"📊 Dashboard": "Build counts and charts, all months",
             "📅 Monthly Builds": "View, add, edit and delete builds by month",
-            "✅ QC": "Checklist by team member and build"}
+            "✅ Quality Check": "Checklist by team member and build"}
 MONTH_VIEWS = ("📅 Monthly Builds",)    # sections that use the sidebar Month picker
 LIVE_VIEWS = ("📊 Dashboard",)          # sections that refresh themselves every 30 seconds
 
