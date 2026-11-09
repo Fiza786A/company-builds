@@ -982,6 +982,136 @@ def _builds_editor(builds, frame, key, label):
 
 
 # Pushes the red "N comments" badge on a checklist section bar to the far right.
+# ── Feature Flags Index ──
+# From "Feature Flags Index.xlsx" (Full List + Context tab). Opened from a small link in the
+# Claims and Feature Flags sections of the QC checklist. To update, edit the rows below.
+FEATURE_FLAGS = [  # (asset, feature flag, company claim, UA security bits, who gets it, notes, on in CIW)
+    ('Payroll/Tax (ALL CLIENTS)', 'New Payroll Engine', '', '', 'All clients', "NOT auto-on for new clients. If FF is missing, uncheck Multi-Company Payroll, check NPE, then re-check MCP. Review & Submit won't appear unless NPE is on.", ''),
+    ('Payroll/Tax (ALL CLIENTS)', 'Multi-Company Payroll', '', '', 'All clients', 'Turn on with Payroll Dashboard FF (MCP alone shows mock data). Takes ~15 min to apply; confirm no payroll in progress; have client review payroll schedules.', ''),
+    ('Payroll/Tax (ALL CLIENTS)', 'Payroll Schedules', '', '', 'All clients', 'Already on as default', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'Suggested Taxes', '', '', 'All clients', 'Already on as default', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'Secure Act 2.0', '', '', 'All clients', 'Already on as default. Can be turned off to clear a blocking payroll alert (dev guidance).', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'Engagement Phase One', 'Engagement Basic + Engagement Core', '', 'All clients', 'Org admin will need to be configured in order to update Engagement settings. NEEDS CONFIRMATION: claim names — SOP uses Community Basic + Community Core (AskHR).', ''),
+    ('Payroll/Tax (ALL CLIENTS)', 'Recognition Settings - Organization', '', '', 'All clients', 'Already on as default', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'Minimum Hours Worked', '', '', 'All clients', 'Already on as default', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'Accrual Expiration', '', '', 'All clients', 'Already on as default', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'Badge Punch Decoupled', '', '', 'All clients', 'Already on as default', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'Earned Wage Access', '', '', 'All clients', 'Already on as default. NEEDS CONFIRMATION: may need to be OFF for FlexPay clients (legacy Rain flag hides FlexPay banner).', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', "Who's In Dashboard", '', '', 'All clients', 'Already on as default', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'Time Off Policies', '', '', 'All clients', 'Already on as default', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'Automatic Holidays', '', '', 'All clients', 'Already on as default', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'Payday Notification', '', '', 'All clients', 'Already on as default', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'Direct Deposit Authorization', '', '', 'All clients', 'Already on as default. Can block paper-check-only payrolls; get product OK before turning off.', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'Punch Request', '', '', 'Clients with T&A', 'Should be on if client has T&A. May be toggled off by request under T&A > Company Rules', ''),
+    ('Payroll/Tax (ALL CLIENTS)', 'Manager Assignment Workflow', '', '', 'Needs confirmation (pending GA)', 'Confirm if now GA.', ''),
+    ('Payroll/Tax (ALL CLIENTS)', 'Effective Dating - Rates', '', '', 'All clients', 'On for all clients unless client requests off. Effective Dated Comp & Retro Pay are nested under it. Turning off opts client out of future effective dating/workflows.', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'New Scheduler', '', '', 'All clients', 'On for all; Scheduler claim controls visibility.', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'Payroll Dashboard', '', '', 'All clients (required with MCP)', "Required with MCP. 'Payroll Dashboard Demo' is sales-only.", ''),
+    ('Payroll/Tax (ALL CLIENTS)', 'Review and Submit (ID 3000)', 'Employee Check Preview; Payroll Comparison', '', 'All clients – needs confirmation', 'Requires NPE. OK for new clients. If it blocks a payroll, turn off first. NEEDS CONFIRMATION: on by default at build?', ''),
+    ('Payroll/Tax (ALL CLIENTS)', 'Payroll Process Timesheet Service', '', '', 'All clients', 'Should be on for all; required for FlexPay.', ''),
+    ('Payroll/Tax (ALL CLIENTS)', 'Invoice PDF Attachment', '', '', 'All clients', 'On for all; can turn off per company on request.', 'Yes'),
+    ('Payroll/Tax (ALL CLIENTS)', 'Employee Profile (user level)', '', '', 'All clients (all EEs)', 'Verify all EEs have it after company-build import (known bug).', ''),
+    ('Payroll/Tax (ALL CLIENTS)', '', 'FlexPay', '', 'If on PEPM (check SF opt-out list)', "Claim alone isn't enough; activate through ops enable process. Check SF opt-out list first.", ''),
+    ('Payroll/Tax (ALL CLIENTS)', 'EditTimesheets (ID 3035)', '', '', 'Do not enable – product approval only', 'DO NOT ENABLE without product approval (slow rollout; DealerTrack import issue).', ''),
+    ('Payroll/Tax (ALL CLIENTS)', 'Local Taxes', '', '', 'Needs confirmation', 'NEEDS CONFIRMATION: on for all?', ''),
+    ('Payroll/Tax (ALL CLIENTS)', 'Arrears deductions', '', '', 'By request (slow rollout)', 'Optional / slow rollout. Flag name TBD.', ''),
+    ('Payroll/Tax (ALL CLIENTS)', 'CA Break Waived notification (FF 4029)', '', '', 'By request (slow rollout)', 'Optional / slow rollout. NEEDS CONFIRMATION: flag details/rollout status.', ''),
+    ('Payroll/Tax (ALL CLIENTS)', 'New Payroll Entry Screen (company-level FF)', '', '', 'By client request (opt-in/opt-out phase)', 'Not fully rolled out – company-level feature flag; enable if client asks (e.g., saw it in a demo). Changes: clicking EE name opens their profile (not timesheet); three-bar icon right of name opens side panel to edit earnings, deductions & taxes for the check. NEEDS CONFIRMATION: exact flag name in FF list.', ''),
+    ('Recruit', 'HigherMe - Recruiting UI Access (user level)', 'Recruit - HigherMe', '', 'If on PEPM', 'Requires FF + Recruit - HigherMe claim. Assign Org Admin + Configure Recruit permission FIRST; turn on FF LAST.', ''),
+    ('Scheduler', "New Scheduler; Who's In Dashboard", 'Scheduler', '', 'If on PEPM', "Enable: Maintenance > System Tables > company > check Scheduler > Update. FFs (Maintenance > Security): New Scheduler + Who's In Dashboard (both on by default). Open a user access case to grant NetScheduler access to admins.", ''),
+    ('Scheduler', 'Shift Preview Notes', '', '', 'By client request', 'Optional, by client request.', ''),
+    ('Fillable Forms', 'Fillable Forms Bulk Download', 'NetGuide-Fillable Forms', '', 'Existing NetGuide clients only', 'Legacy NetGuide – existing NetGuide clients only. New builds use the O&W form builder.', ''),
+    ('AskHR with AI', 'AskHR', 'Community Basic + Community Core', '5320 - AskHR', 'If on PEPM', 'FF: Maintenance > Security > New Feature Access > AskHR section. Claims: System Tables > Company Structure > Claims — check Community Basic, then Community Core. Docs must be uploaded for this to work. Client confirms admin (Product Suite > AskHR) + EE (dashboard) access, then email/Zoom Tanya Jain to enable AI (1–3 business days). Once live, send AskHR with AI Overview and Setup Checklist.', ''),
+    ('AskHR with AI', 'AskHR - Engagement Dashboard', '', '', 'If on PEPM – needs confirmation', '', ''),
+    ('Netchex AI', 'Netchex AI', 'NetchexAI', '', 'If on PEPM', 'Send Zoom notification to Tanya Jain to enable after FFs have been enabled - include company code. NEEDS CONFIRMATION: Tanya Jain step still current?', ''),
+    ('Performance', '', 'Reviews', '', 'If on PEPM (Included in Performance)', 'Per review cycle — no base setup beyond claim. ALL Performance claims: Maintenance > Company Information > company > Settings > Claims > Performance; no FF. Allow 6–12 hrs to appear (6-hr sync); role permissions + EE/manager mapping still required.', ''),
+    ('Performance', '', 'Goals', '', 'If on PEPM (Included in Performance)', 'Org level only. Then Goals > Settings: methodology (nomenclature, cascading, role permissions), goal cycle periods, check-in + goal-setting reminders.', ''),
+    ('Performance', '', '1-on-1', '', 'If on PEPM (Included in Performance)', 'Org level only. Optional: 1-on-1 > Settings — satisfaction score, carry forward agenda points, admin pre-set agenda points.', ''),
+    ('Performance', '', 'Disciplinary Action', '', 'If on PEPM (Included in Performance)', 'Org level only. Then Disciplinary Action > Settings: set up types and map approvers (optional auto-approval / auto-acknowledgement).', ''),
+    ('Performance', '', 'Violation Points', '', 'If on PEPM (Included in Performance)', 'Org level only. Then Violation Points > Settings: set up org policy. Automatic point rules need T&A + Scheduler.', ''),
+    ('Performance', '', 'Compensation', '', 'If on PEPM (requires Payroll)', 'Per comp planning cycle. Requires Payroll; proposers/approvers/publishers need EE access mapped + view/modify wages. Enable only after Performance training; 30–40 min session.', ''),
+    ('Performance', '', 'Journals (Beta)', '', 'If on PEPM', 'Org level only. No additional setup.', ''),
+    ('Insights', 'Insights', '', '5090 - Netchex Submenu Item (NetInsight and Insights) and 5110 - Reports Executive Dashboard', 'If on PEPM', 'Turn on Insights FF + security group 5090. Grant admin access via Netchex Client Basic Add-on items. No company claim listed in SOP.', ''),
+    ('Org Chart', '', 'Organizational Chart', '', 'If on PEPM', '', ''),
+    ('ExpensePath', 'ExpensePath (employee level)', '', '', 'If on PEPM', "Enable Netchex → ExpensePath API integration (Maintenance > More > API Integration — Development must enable). Set up company in ExpensePath Partner Portal. Build Expense Reimbursement deduction code or exports fail. If an EE has no access, check FF is on for the employee and access isn't disabled in ExpensePath.", ''),
+    ('NetLearn', 'LMS', '', '', 'If on PEPM', 'Turn on in company (Maintenance > Security > New Feature Access) with NetLearn - Manage Users. Complete BizLibrary setup first (Team, Billing ID, Custom Library, Content Group — 3–7 day turnaround).', ''),
+    ('NetLearn', 'NetLearn - Manage Users', '', '', 'If on PEPM', 'Push admin users from 002 into NetLearn (Maintenance > Human Resources > NetLearn - Manage Users). Confirm Login IDs match first.', ''),
+    ('Hireology', '', 'Hireology', '4300 - Hireology SSO Integration', 'Hireology clients (no normal PEPM)', 'Open VSTS to add client to Hireology File Feed. Client will not have normal PEPM proposal. Keep VSTS step until ticket #219712 closes. Confirm Hireology claim on every company in the org.', ''),
+    ('Onboarding & Workflows', '', 'Onboarding & Workflows', 'Check Org Admin Set up - Configure Workflows Org Permission. Manager Access: view onboarding dashboard / activate / withdraw pending EEs. Security groups 20/100/120/999. 1030 only for I-9 reviewer-only users.', 'All new clients (included with Core)', 'Included with Core for all new clients. Enable: Maintenance > Company Information > company > check Onboarding & Workflows > Update. Feature flags no longer required to enable. Org Admin needs Configure Workflows and must complete initial Workflow setup before others can use tasks.', ''),
+    ('Onboarding & Workflows', 'Effective Dating - Company Structure', '', '', 'Clients with O&W', 'Splits EE time between departments when a dept change is effective mid-period.', ''),
+    ('Onboarding & Workflows', '', 'Pending Employee Experience', '', 'Opt-in (by client request)', 'Opt-in. Turn on BEFORE employees are added.', ''),
+    ('Onboarding & Workflows', '', 'Gender Identity (Client Requested)', '', 'By client request', '', ''),
+    ('Onboarding & Workflows', 'WorkflowsOnboardingDashboard and WorkflowsNewHireDashboard (ID 2028)', '', '', 'Clients with O&W – needs confirmation', 'Replaces NetGuide tasks on New Hire dashboard. NEEDS CONFIRMATION: turn on only when client is ready to stop NetGuide tasks? Known issue: Quick Links > Tasks still routes to Workflows when off.', ''),
+    ('Onboarding & Workflows', 'Employee Acknowledgement', '', '', '', '', ''),
+    ('Onboarding & Workflows', 'Onboarding Tasks', '', '', '', '', ''),
+    ('Onboarding & Workflows', 'Form I9 Task', '', '', '', '', ''),
+    ('Onboarding & Workflows', 'WorkflowsLicenseAndCertificationTasks', '', '', 'Clients with O&W', 'Feeds Expiring Credentials dashboard.', ''),
+    ('Onboarding & Workflows', 'Ad-hoc / one-time tasks', '', '', 'Clients with O&W – needs confirmation', 'NEEDS CONFIRMATION: flag name (Matt Mangold).', ''),
+    ('Engagement & Communications', 'Communications', '', '', 'If on PEPM', "Announcements (Beta): FF only, no claim (Maintenance > Security > New Feature Access > 'Communication' flag, end of list). Overrides old announcements; old link redirects. Also required for Conversations. Enable only, no training.", ''),
+    ('Engagement & Communications', '', 'Workplace Communication', '', 'If on PEPM', 'Conversations (Beta): claim + Communications FF. Then Communication > Conversation Settings — create channels. No training.', ''),
+    ('Engagement & Communications', '', 'Rewards & Recognition', '', 'If on PEPM', 'Recognition & Rewards (Beta): claim only. Rewards itself enabled by request to Product team; define credit-to-dollar, credit values, monthly budgets, redemption (payroll and/or Giftogram gift card — gift card needs Netchex team integration). Runs separately from old recognition. 1-hr training.', ''),
+    ('Engagement & Communications', '', 'Surveys', '', 'If on PEPM', 'Configured per survey cycle. Optional: Performance (for review-split reporting).', ''),
+    ('Engagement & Communications', '[DemoOnly] Conversation Dashboard', '', '', 'Demo companies only', 'DO NOT ENABLE for clients – demo companies only.', ''),
+    ('Benefits', 'Benefits Enablement Experience', '', '', 'Benefits clients + demo companies', 'Already on for existing Benefits clients; turn on for new Benefits clients and demo companies.', ''),
+    ('Employee', 'Position attributes', '', '', 'By request (slow rollout)', 'Optional / slow rollout. Search "position" in the FF list.', ''),
+    ('Employee', 'Employee list MUI grid', '', '', 'Demo companies only', 'Optional / slow rollout. Demo only.', ''),
+    ('Employee', '', 'Hide Year of Birth in SSHR', '', 'Opt-in (by client request)', 'Optional / slow rollout. Opt-in claim.', ''),
+]
+
+FF_GROUPS = ["Always on", "If on PEPM", "By request", "Needs confirmation", "Don't enable"]
+
+
+def _ff_group(who):
+    w = who.lower()
+    if "do not enable" in w or w.startswith("demo"):
+        return "Don't enable"
+    if w.startswith("all"):
+        return "Always on"
+    if "request" in w or "opt-in" in w:
+        return "By request"
+    if "pepm" in w or w.startswith(("clients with", "existing", "hireology", "benefits")):
+        return "If on PEPM"
+    return "Needs confirmation"
+
+
+@st.dialog("Feature Flags Index", width="large", icon=":material/flag:")
+def _feature_flags_dialog():
+    st.caption("What to turn on for each product. Turn on everything **Always on**, then each **If on PEPM** "
+               "product the client bought. Add **By request** items only when the client asks.  \n"
+               "✅ already on in CIW, just verify · ⚠️ not confirmed yet, double-check · ⛔ don't enable for clients")
+    f1, f2 = st.columns([2, 3], vertical_alignment="center")
+    q = f1.text_input("Search", placeholder="Search flags, claims, products, notes", key="ff_q",
+                      label_visibility="collapsed").strip().lower()
+    show = f2.segmented_control("Show", FF_GROUPS, selection_mode="multi", key="ff_groups",
+                                label_visibility="collapsed")
+    rows = []
+    for asset, flag, claim, bits, who, notes, ciw in FEATURE_FLAGS:
+        group = _ff_group(who)
+        if show and group not in show:
+            continue
+        if q and q not in " ".join((asset, flag, claim, bits, who, notes)).lower():
+            continue
+        mark = ("⛔" if group == "Don't enable" or "DO NOT ENABLE" in notes
+                else "⚠️" if group == "Needs confirmation" or "NEEDS CONFIRMATION" in notes
+                else "✅" if ciw == "Yes" else "")
+        rows.append({"": mark, "Product": asset, "Feature flag": flag, "Company claim": claim,
+                     "Security bits": bits, "Who gets it": who, "Notes": notes})
+    if not rows:
+        st.info("Nothing matches. Clear the search or filters.")
+        return
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch", height=min(35 * len(rows) + 40, 520),
+                 column_config={"": st.column_config.TextColumn("", width=35),
+                                "Product": st.column_config.TextColumn(width=150),
+                                "Feature flag": st.column_config.TextColumn(width=210),
+                                "Company claim": st.column_config.TextColumn(width=160),
+                                "Security bits": st.column_config.TextColumn(width=130),
+                                "Who gets it": st.column_config.TextColumn(width=160),
+                                "Notes": st.column_config.TextColumn(width=420,
+                                                                     help="Click a cell to read the full note")})
+    st.caption(f"{len(rows)} of {len(FEATURE_FLAGS)} items · Flags: Maint > Security > New Feature Access · "
+               "Claims: Company Information > Claims")
+
+
 CHECKLIST_CSS = """<style>
 [data-testid="stExpander"] summary:has(.stMarkdownBadge) > span { flex: 1 1 auto; width: 100%; }
 [data-testid="stExpander"] summary:has(.stMarkdownBadge) > span > div { flex: 1 1 auto; min-width: 0; }
@@ -1120,7 +1250,13 @@ def _render_build_checklist(builds, checks):
             # Like other ticks, nothing is saved until you click Save.
             view = df.reset_index(drop=True)
             applicable = ~view["N/A"]
-            t1, t2, _ = st.columns([1, 1, 4])
+            t1, t2, t3 = st.columns([1, 1, 4])
+            if section.startswith(("Netchex - Claims", "Netchex - Feature Flags")):
+                with t3.container(horizontal=True, horizontal_alignment="right"):
+                    if st.button("Feature Flags Index", key=f"ff_open_{build_id}_{si}", type="tertiary",
+                                 icon=":material/flag:",
+                                 help="Which feature flags, claims and security bits to turn on, by product"):
+                        _feature_flags_dialog()
             for col, field, label in ((t1, "Built", "Tick all Built"), (t2, "QC", "Tick all QC")):
                 all_now = bool(applicable.any() and view.loc[applicable, field].all())
                 want = col.checkbox(label, value=all_now, key=f"chk_all{field}_{build_id}_{si}",
@@ -1696,7 +1832,16 @@ def render_builds_page():
         st.button("🏠 Home", key="go_home", width="stretch", on_click=_go_home)
 
     st.title(view)
-    st.caption(SECTIONS[view])
+    if view == "✅ Quality Check":
+        # A small link to the Feature Flags Index at the top of the page, for reference while building.
+        c1, c2 = st.columns([3, 1], vertical_alignment="center")
+        c1.caption(SECTIONS[view])
+        with c2.container(horizontal=True, horizontal_alignment="right"):
+            if st.button("Feature Flags Index", key="ff_open_qc", type="tertiary", icon=":material/flag:",
+                         help="Which feature flags, claims and security bits to turn on, by product"):
+                _feature_flags_dialog()
+    else:
+        st.caption(SECTIONS[view])
     if view == "📊 Dashboard":
         _live(_render_overview)
     elif view == "📅 Monthly Builds":
