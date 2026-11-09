@@ -981,15 +981,27 @@ def _builds_editor(builds, frame, key, label):
 
 
 
-# Pushes the red "N comments" badge on a checklist section bar to the far right.
-# ── Feature Flags Index ──
+# ── Reference sheets (live Excel files on SharePoint) ──
 # The live Excel sheet kept by the US team (SharePoint). The app only links to it, so everyone always
 # sees the latest version; opening it needs a Netchex Microsoft sign-in. Change the link here if it moves.
 FEATURE_FLAGS_URL = ("https://netchex849-my.sharepoint.com/:x:/r/personal/ckrebs_netchexonline_com/Documents/"
                      "Feature%20Flags%20Index.xlsx?d=wd0129a38e09943edb0c01076a4ab323d&csf=1&web=1&e=eV6ddh")
 FF_HELP = "Opens the live Feature Flags Index (Excel) in a new tab. Sign in with your Netchex account."
+SUTA_RATES_URL = ("https://netchex849-my.sharepoint.com/:x:/r/personal/fali_netchexonline_com/Documents/Documents/"
+                  "Important%20Documents/2026_State_Unemployment_New_Employer_Rates.xlsx"
+                  "?d=w62feec7e76fc41e4a2f67b41d3fbf5d2&csf=1&web=1&e=mxviGy")
+
+# Links shown at the top right of a checklist section: section name starts with -> (label, url, tooltip)
+SECTION_LINKS = {
+    "Netchex - Tax Codes": [("2026 SUTA New Employer Rates", SUTA_RATES_URL,
+                             "Opens the 2026 State Unemployment new employer rates (Excel) in a new tab. "
+                             "Sign in with your Netchex account.")],
+    "Netchex - Claims": [("Feature Flags Index", FEATURE_FLAGS_URL, FF_HELP)],
+    "Netchex - Feature Flags": [("Feature Flags Index", FEATURE_FLAGS_URL, FF_HELP)],
+}
 
 
+# Pushes the red "N comments" badge on a checklist section bar to the far right.
 CHECKLIST_CSS = """<style>
 [data-testid="stExpander"] summary:has(.stMarkdownBadge) > span { flex: 1 1 auto; width: 100%; }
 [data-testid="stExpander"] summary:has(.stMarkdownBadge) > span > div { flex: 1 1 auto; min-width: 0; }
@@ -1129,10 +1141,11 @@ def _render_build_checklist(builds, checks):
             view = df.reset_index(drop=True)
             applicable = ~view["N/A"]
             t1, t2, t3 = st.columns([1, 1, 4])
-            if section.startswith(("Netchex - Claims", "Netchex - Feature Flags")):
+            links = [l for start, ls in SECTION_LINKS.items() if section.startswith(start) for l in ls]
+            if links:
                 with t3.container(horizontal=True, horizontal_alignment="right"):
-                    st.link_button("Feature Flags Index", FEATURE_FLAGS_URL, type="tertiary",
-                                   icon=":material/open_in_new:", help=FF_HELP)
+                    for link_label, url, tip in links:
+                        st.link_button(link_label, url, type="tertiary", icon=":material/open_in_new:", help=tip)
             for col, field, label in ((t1, "Built", "Tick all Built"), (t2, "QC", "Tick all QC")):
                 all_now = bool(applicable.any() and view.loc[applicable, field].all())
                 want = col.checkbox(label, value=all_now, key=f"chk_all{field}_{build_id}_{si}",
