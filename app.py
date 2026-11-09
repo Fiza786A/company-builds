@@ -1721,15 +1721,7 @@ def render_builds_page():
         st.button("🏠 Home", key="go_home", width="stretch", on_click=_go_home)
 
     st.title(view)
-    if view == "✅ Quality Check":
-        # A small link to the Feature Flags Index at the top of the page, for reference while building.
-        c1, c2 = st.columns([3, 1], vertical_alignment="center")
-        c1.caption(SECTIONS[view])
-        with c2.container(horizontal=True, horizontal_alignment="right"):
-            st.link_button("Feature Flags Index", FEATURE_FLAGS_URL, type="tertiary",
-                           icon=":material/open_in_new:", help=FF_HELP)
-    else:
-        st.caption(SECTIONS[view])
+    st.caption(SECTIONS[view])
     if view == "📊 Dashboard":
         _live(_render_overview)
     elif view == "📅 Monthly Builds":
