@@ -219,6 +219,12 @@ BUILD_FIELDS = {  # column shown in the tracker -> database field, in the order 
     "Built By": "built_by", "QC": "qc_by",                  # then who did each, in the same order
     "Assigned By": "assigned_by", "Due Date": "due_date", "Date of Completion": "completion_date",
 }
+# Column layouts for the Monthly Builds table, switched with the toggle above it.
+BUILD_LAYOUTS = {
+    "Standard view": list(BUILD_FIELDS),
+    "Team view": ["Company Name", "Company Code", "Hierarchy", "Due Date", "Built By", "Status", "QC",
+                  "QC Status", "Assigned By", "Date of Completion", "UA Status", "Balance Status"],
+}
 PROPER_CASE_FIELDS = ("company_name", "hierarchy", "built_by", "assigned_by", "qc_by")
 PERSON_FIELDS = ("built_by", "assigned_by", "qc_by")
 # Implementation Checklist - Direct Sales Clients (updated Nov 2026: the new checklist merged with the
@@ -887,8 +893,12 @@ def _builds_editor(builds, frame, key, label):
     leads = with_extras(PAYROLL_LEADS, "assigned_by")
     # The key changes after every save so the table reloads fresh from the database.
     version = st.session_state.get("builds_editor_version", 0)
+    # Two column layouts of the same table; both are editable and save the same way.
+    layout = st.segmented_control("View", list(BUILD_LAYOUTS), default="Standard view", key="builds_layout",
+                                  label_visibility="collapsed") or "Standard view"
     edited = st.data_editor(
         table, key=f"builds_editor_{key}_{version}", hide_index=True, width="stretch", num_rows="dynamic",
+        column_order=BUILD_LAYOUTS[layout],
         height=min(35 * len(table) + 75, 700),
         column_config={
             "id": None,
@@ -1110,7 +1120,9 @@ def _render_build_checklist(builds, checks):
 
     st.markdown(f"**Status:** {STATUS_LABEL.get(status, status)} &nbsp;·&nbsp; "
                 f"**QC status:** {STATUS_LABEL.get(qc_status, qc_status)}")
-    unsaved_note = st.empty()     # filled in below once we know whether anything is unsaved
+    st.caption("Ticks, N/A, comments and the names below save automatically as you make them.")
+    # The tables get fresh keys after each save so they reload the saved values.
+    ver = st.session_state.get(f"chk_ver_{build_id}", 0)
 
     saved = {r.item_id: r for r in checks[checks.build_id == build_id].itertuples()}
 
@@ -1133,11 +1145,15 @@ def _render_build_checklist(builds, checks):
         done = "✅ " if sec_app and sec_built == sec_app and sec_qc == sec_app else ""
         # Shown as a red badge, pushed to the far right of the section bar by CHECKLIST_CSS.
         notes = f" :red-badge[🔴 {n_notes} comment{'s' if n_notes != 1 else ''}]" if n_notes else ""
-        with st.expander(f"{done}{section}  —  Built {sec_built}/{sec_app} · QC {sec_qc}/{sec_app}{notes}"):
+        # Remember which sections are open, so a section stays open after an auto-save changes its counts.
+        open_key = f"chk_open_{build_id}_{si}"
+        exp = st.expander(f"{done}{section}  —  Built {sec_built}/{sec_app} · QC {sec_qc}/{sec_app}{notes}",
+                          expanded=st.session_state.get(open_key, False), on_change="rerun")
+        st.session_state[open_key] = bool(exp.open)
+        with exp:
             if note:
                 st.caption(note)
             # Tick (or untick) every item in this section at once. Items marked N/A are left alone.
-            # Like other ticks, nothing is saved until you click Save.
             view = df.reset_index(drop=True)
             applicable = ~view["N/A"]
             t1, t2, t3 = st.columns([1, 1, 4])
@@ -1148,13 +1164,13 @@ def _render_build_checklist(builds, checks):
                         st.link_button(link_label, url, type="tertiary", icon=":material/open_in_new:", help=tip)
             for col, field, label in ((t1, "Built", "Tick all Built"), (t2, "QC", "Tick all QC")):
                 all_now = bool(applicable.any() and view.loc[applicable, field].all())
-                want = col.checkbox(label, value=all_now, key=f"chk_all{field}_{build_id}_{si}",
+                want = col.checkbox(label, value=all_now, key=f"chk_all{field}_{build_id}_{si}_{ver}",
                                     help=f"Ticks {field} for every item in this section (not N/A ones). "
-                                         "Untick to clear them all. Remember to Save.")
+                                         "Untick to clear them all.")
                 if want != all_now:
                     view.loc[applicable, field] = want
             ed = st.data_editor(
-                view, key=f"chk_{build_id}_{si}", hide_index=True, width="stretch",
+                view, key=f"chk_{build_id}_{si}_{ver}", hide_index=True, width="stretch",
                 num_rows="fixed", disabled=["Area", "Item", "Note"],
                 column_config={"item_id": None,
                                "Area": st.column_config.TextColumn("Area", width=200),
@@ -1182,7 +1198,7 @@ def _render_build_checklist(builds, checks):
 
     def pick(col, label, options, current, k):
         opts = [NONE, *options] + ([current] if current and current not in options else [])
-        return col.selectbox(label, opts, index=opts.index(current) if current else 0, key=f"{k}_{build_id}")
+        return col.selectbox(label, opts, index=opts.index(current) if current else 0, key=f"{k}_{build_id}_{ver}")
 
     with st.container(border=True):
         n1, n2, n3, n4 = st.columns(4)
@@ -1196,30 +1212,31 @@ def _render_build_checklist(builds, checks):
     field_changes = {k: (None if v == NONE else v) for k, v in new_fields.items()
                      if (v if v != NONE else "") != old_fields[k]}
 
+    # Auto-save: any change (a tick, N/A, a comment once you press Enter or click away, or a name/status)
+    # is written to the database straight away, then the checklist reloads with the saved values.
     n_changes = len(changes) + len(field_changes)
-    label = f"💾 Save ({n_changes} change{'s' if n_changes != 1 else ''})" if n_changes else "💾 Save"
     if n_changes:
-        unsaved_note.warning(f"**{n_changes} unsaved change{'s' if n_changes != 1 else ''}** (ticks, comments or "
-                             "names). Click **💾 Save** at the bottom, or they'll be lost when you leave this build. "
-                             "The 🔴 appears on a comment once it's saved.", icon="⚠️")
-    if st.button(label, type="primary", disabled=not n_changes, key="chk_save"):
-        save_build_checks([{"build_id": int(build_id), "item_id": k, "built": v[0], "qc": v[1], "na": v[2],
-                            "comments": v[3] or None} for k, v in changes.items()])
-        if field_changes:
-            if field_changes.get("status") == "Completed" and not _to_date(b.completion_date):
-                field_changes["completion_date"] = today_local()
-            update_build(build_id, field_changes)
-        # Reset the "Tick all" boxes so they show the saved state again.
-        for k in [k for k in st.session_state if str(k).startswith(("chk_allBuilt_", "chk_allQC_"))]:
-            del st.session_state[k]
-        flash(f"Saved {n_changes} change{'s' if n_changes != 1 else ''} for {txt(b.company_name)}.")
+        try:
+            if changes:
+                save_build_checks([{"build_id": int(build_id), "item_id": k, "built": v[0], "qc": v[1], "na": v[2],
+                                    "comments": v[3] or None} for k, v in changes.items()])
+            if field_changes:
+                if field_changes.get("status") == "Completed" and not _to_date(b.completion_date):
+                    field_changes["completion_date"] = today_local()
+                update_build(build_id, field_changes)
+            st.session_state["_toast"] = (f"✅ Saved {n_changes} change{'s' if n_changes != 1 else ''} "
+                                          f"for {txt(b.company_name)}")
+        except Exception as e:
+            st.session_state["_flash_error"] = f"Could not save your change, please try again. ({e})"
+        # Fresh widget keys so the ticks, Tick all boxes and names show the saved state.
+        st.session_state[f"chk_ver_{build_id}"] = ver + 1
         st.rerun()
 
     built, qc, applicable = _progress(checks, build_id)
     if applicable and built == applicable and status != "Completed":
-        st.info("Every checklist item is built. Set **Status** to Completed above and save.")
+        st.info("Every checklist item is built. Set **Status** to Completed above.")
     if applicable and qc == applicable and qc_status != "Completed":
-        st.info("Every checklist item is QC'd. Set **QC status** to Completed above and save.")
+        st.info("Every checklist item is QC'd. Set **QC status** to Completed above.")
 
 
 
