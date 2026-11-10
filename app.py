@@ -245,14 +245,14 @@ CHECKLIST = [
             ("S01-07", "★ Verify Federal ID matches PIN"),
             ("S01-08", "Update Phone Number (if applicable)"),
             ("S01-09", "Change TYPE from Prospect to Netchex Client"),
-            ("S01-10", "Choose Pricing Model — PEPM or Legacy"),
-            ("S01-11", "Choose Package (Core, Complete, Legacy) — leave blank if PEPM"),
+            ("S01-10", "Choose Pricing Model — PEPM"),
+            ("S01-11", "Choose Package — DealerTrack clients only (leave blank for everyone else)"),
             ("S01-12", "Choose Yes/No for Distributed Invoicing"),
             ("S01-13", "Choose Yes/No for Seasonal Client"),
             ("S01-14", "★ Check Currently in Implementation box"),
         ]),
         ("Account Financial Status", [
-            ("S01-02", "★ Enter Average Payroll Amount (enter 0.00 until Proof of DD received; update once proof is on file)"),
+            ("S01-02", "★ Enter Average Payroll Amount from the analysis document (not known yet? enter 0.00 and update before the first direct deposit payroll)"),
         ]),
         ("Address Information", [("S01-15", "Enter Shipping Address")]),
         ("Designated Points of Contact", [
@@ -286,17 +286,20 @@ CHECKLIST = [
         ]),
     ]),
     ("Salesforce - Assets",
-     "⚠️ Activate PAYROLL assets only. Do NOT activate HR, Benefits or E-Verify assets — those belong to HR Leads / "
-     "Benefit Leads. That includes Employee Navigator, NetBenefits, NetEnroll, NetCobra, ACA Central, Carrier "
-     "Solutions, EDI Feed or any forms, and the HR assets NetInsight, NetEngage, NetGuide, NetLearn, NetPerform, "
-     "NetRecruiter, NetScheduler, NetExpense/ExpensePath, Org Charts, Compensation Management, Fillable Forms, "
-     "AskHR+AI and E-Verify.", [
+     "⚠️ Activate only the PAYROLL assets below that are on the proposal (Status Pending > Implemented/In Use; "
+     "missing? click New). Leave HR, Benefits and E-Verify assets to the HR Onboarding Lead / Benefit Leads: "
+     "Onboarding & Workflows, Recruit, Performance, NetLearn, Insights, ExpensePath, AskHR, Employee Navigator, "
+     "NetBenefits, NetEnroll, NetCobra, ACA Central, Carrier Solutions, EDI Feed or any forms, NetEngage, "
+     "NetScheduler, Compensation Management, Fillable Forms and E-Verify.", [
         ("Assets", [
             ("N01", "Payroll/Tax"),
             ("N02", "ESS/MSS"),
             ("N03", "The Work Number"),
             ("N04", "Time & Attendance"),
             ("N05", "EE Engagement/Recognition Portal — Basic/Advanced (Community Core)"),
+            ("N16", "Org Chart"),
+            ("N17", "Earned Wage Access"),
+            ("N18", "Workers' Comp Integration"),
         ]),
     ]),
     ("Salesforce - Onboarding Details", "", [
@@ -336,7 +339,6 @@ CHECKLIST = [
             ("S06-08", "Company Info"),
             ("S06-09", "Employee Search"),
             ("S06-10", "Payroll"),
-            ("S06-11", "NetGuide (ONLY if on proposal — activate in System Claims first, then add widget)"),
         ]),
         ("Reports > File Feeds", [
             ("S06-12", "Set up The Work Number (Company Info + Client Contact + Partner Contact — Rene Roy)"),
@@ -396,7 +398,6 @@ CHECKLIST = [
             ("S08-17", "Performance / NetPerform (if on proposal)"),
             ("S08-14", "Recruit - HigherMe / NetRecruiter (if on proposal)"),
             ("S08-18", "NetScheduler (if on proposal)"),
-            ("S08-15", "NetGuide (if on proposal)"),
             ("S08-16", "Fillable Forms (if on proposal)"),
             ("S08-19", "Engagement Basic (activate for ALL clients — has feature flags)"),
             ("S08-20", "Engagement Core (if on proposal)"),
@@ -408,7 +409,7 @@ CHECKLIST = [
             ("S09-01", "Add feature flags according to the company claims enabled in Company Info page "
                        "(products listed on PEPM proposal)"),
             ("S09-02", "Activate Employee Engagement Basic (Community Basic) for ALL clients"),
-            ("S09-03", "(Post 1st payroll) Activate Earned Wage Access for clients using T&A only"),
+            ("S09-03", "Verify Earned Wage Access feature flag is on (always-on flag for every client)"),
             ("S09-04", "Earned Wage Access: Product Suite > Earned Wage Access, activate the slider for the company"),
             ("S09-05", "Activate QBO (ONLY for QBO Integration clients)"),
         ]),
@@ -461,17 +462,18 @@ CHECKLIST = [
             ("S12-10", "Check Box Details 1, 3, 6, 7 (Dept Info, Accrual Info, Saved Signature, Employer Ded. Amounts)"),
             ("S12-11", "Premium Pay only: add \"(C/O Netchex Payroll)\" to the second line of the Check Header"),
         ]),
-        ("Back Office > More > RR", [("S12-12", "Assign company to Report Runner")]),
+        ("Back Office > More > RR", [("S12-12", "Verify the company is set up in Report Runner (now automatic for new companies; "
+                                               "if missing, copy from CIW/OHE/parent)")]),
     ]),
     ("Netchex - Time & Attendance", "", [
         ("T&A > More > Settings > Web Terminal Setup", [
-            ("S13-01", "Build Web Terminal (Time Clock or Time Sheet — enable/disable per client)"),
+            ("S13-01", "Verify Web Terminal WEB01 (exists by default) — Time Clock or Time Sheet, enable/disable per client"),
         ]),
         ("T&A > Company Rules", [
             ("S13-02", "Set up Payroll Group Rules (all payroll groups)"),
             ("S13-03", "Shift Setup — OT > 40 on all hourly groups; remove OT from Salary Exempt groups"),
-            ("S13-04", "Terminal Group Setup — link Terminal Group to Web Terminal"),
-            ("S13-05", "Add Employees to Terminal Group"),
+            ("S13-04", "Verify Terminal Group T01 is linked to WEB01 (exists by default)"),
+            ("S13-05", "Add Employees to Terminal Group — after the employee load, not during the build"),
         ]),
     ]),
     ("Salesforce - Cases", "⚠️ All cases below must be created after every shell build without exception.", [
@@ -770,6 +772,114 @@ def _excel_link(data, file_name, label, tip):
             f'{icon}{html.escape(label)}</a></div>')
 
 
+def export_checklist_excel(b, saved):
+    """One build's QC checklist as a printable Excel file: build details on top, then every section and item
+    with its Built / QC / N/A ticks and comments."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    def txt(v):
+        return _clean_text(v) or ""
+
+    def day(v):
+        d = _to_date(v)
+        return f"{d:%m/%d/%Y}" if d else ""
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "QC Checklist"
+    bold = Font(bold=True)
+    thin = Side(style="thin", color="BFBFBF")
+    box = Border(left=thin, right=thin, top=thin, bottom=thin)
+    wrap = Alignment(wrap_text=True, vertical="top")
+    center = Alignment(horizontal="center", vertical="top")
+
+    name = txt(b.company_name)
+    ws.append([f"QC Checklist – {name}"])
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.merge_cells("A1:G1")
+    status, qc_status = txt(b.status) or "Pending", txt(b.qc_status) or "Pending"
+    applicable = [it for it in CHECK_ITEMS if not (saved.get(it["id"]) is not None and saved[it["id"]].na)]
+    n_built = sum(1 for it in applicable if saved.get(it["id"]) is not None and saved[it["id"]].built)
+    n_qc = sum(1 for it in applicable if saved.get(it["id"]) is not None and saved[it["id"]].qc)
+    details = [("Company Code", txt(b.company_code)), ("Hierarchy", txt(b.hierarchy)),
+               ("Built By", txt(b.built_by)), ("Status", status),
+               ("QC'd By", txt(b.qc_by)), ("QC Status", qc_status),
+               ("Due Date", day(b.due_date)), ("Completed On", day(b.completion_date)),
+               ("Progress", f"Built {n_built}/{len(applicable)} · QC {n_qc}/{len(applicable)}"),
+               ("Downloaded", f"{now_local():%m/%d/%Y %I:%M %p} IST")]
+    ws.append([])
+    for i in range(0, len(details), 2):     # two label/value pairs per row
+        row = []
+        for label, value in details[i:i + 2]:
+            row += [label, value, ""]
+        ws.append(row[:6])
+        for col in (1, 4):
+            ws.cell(row=ws.max_row, column=col).font = bold
+    ws.append([])
+
+    headers = ["Area", "Item", "Key", "Built", "QC", "N/A", "Comments"]
+    ws.append(headers)
+    head_row = ws.max_row
+    for c in ws[head_row]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="1F3864")
+        c.border = box
+        c.alignment = center
+    ws.freeze_panes = f"A{head_row + 1}"
+
+    section_fill = PatternFill("solid", fgColor="D9E1F2")
+    done_fill = PatternFill("solid", fgColor="C6EFCE")
+    na_fill = PatternFill("solid", fgColor="EDEDED")
+    for section, note, _groups in CHECKLIST:
+        items = [it for it in CHECK_ITEMS if it["section"] == section]
+        app_items = [it for it in items if not (saved.get(it["id"]) is not None and saved[it["id"]].na)]
+        sb = sum(1 for it in app_items if saved.get(it["id"]) is not None and saved[it["id"]].built)
+        sq = sum(1 for it in app_items if saved.get(it["id"]) is not None and saved[it["id"]].qc)
+        ws.append([f"{section}  —  Built {sb}/{len(app_items)} · QC {sq}/{len(app_items)}"])
+        r = ws.max_row
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=7)
+        ws.cell(row=r, column=1).font = bold
+        for col in range(1, 8):
+            ws.cell(row=r, column=col).fill = section_fill
+            ws.cell(row=r, column=col).border = box
+        if note:
+            ws.append([note])
+            r = ws.max_row
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=7)
+            ws.cell(row=r, column=1).font = Font(italic=True, size=9, color="595959")
+            ws.cell(row=r, column=1).alignment = wrap
+            ws.row_dimensions[r].height = 15 * max(1, len(note) // 140 + 1)
+        for it in items:
+            s = saved.get(it["id"])
+            built, qc, na = (bool(s.built), bool(s.qc), bool(s.na)) if s is not None else (False, False, False)
+            ws.append([it["sub"], it["item"], "★" if it["key"] else "",
+                       "✓" if built else "", "✓" if qc else "", "N/A" if na else "",
+                       txt(s.comments) if s is not None else ""])
+            r = ws.max_row
+            for col in range(1, 8):
+                cell = ws.cell(row=r, column=col)
+                cell.border = box
+                cell.alignment = center if col in (3, 4, 5, 6) else wrap
+            if na:
+                for col in range(1, 8):
+                    ws.cell(row=r, column=col).fill = na_fill
+            else:
+                for col, ok in ((4, built), (5, qc)):
+                    if ok:
+                        ws.cell(row=r, column=col).fill = done_fill
+
+    for col, width in zip("ABCDEFG", (30, 70, 6, 8, 8, 7, 40)):
+        ws.column_dimensions[col].width = width
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = f"{head_row}:{head_row}"
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def export_all_builds_excel(builds, raines):
     """Every build to date: a Summary sheet, all company builds, and the Raines builds."""
     from openpyxl import Workbook
@@ -1010,6 +1120,283 @@ SECTION_LINKS = {
     "Netchex - Feature Flags": [("Feature Flags Index", FEATURE_FLAGS_URL, FF_HELP)],
 }
 
+# "How to" notes, opened from a small button at the top right of a checklist section so the table stays clean.
+# From the Company Build Checklist instructions (v1.0, Oct 2026). ⚠️ = not confirmed yet.
+SECTION_HOWTO = {
+    "Netchex - Tax Codes": """
+**Default state codes** · Maintenance > Payroll > Tax Codes
+- Never delete FED EIC, FED INCOME TAX, FUTA - 940, MEDICARE or SOCIAL SECURITY.
+- No Louisiana employees? Delete LA State and LA SUTA. Louisiana employees? Keep and update them.
+- *Why: unused states lead to employees coded to the wrong state, often found only at W-2 time.*
+
+**State withholding code (each state)** · Salesforce Knowledge > Tax Setup Guide > [state]
+- Tax Code `GA` · Description "GA State" · Tax Table = state income tax · Tax Mapping from the list.
+- W-2 ID = state ID (FEIN if none; never blank). SUTA ID blank. Employer and SDI rates 0.000.
+- Payee MasterTax · Type State Tax · Reference `GA0000-001` · default deposit frequency.
+- No-income-tax states (e.g. TX) still get a code. Ask your lead about long local lists (PA, OH).
+
+**SUTA code (each state)** · Maintenance > Payroll > Tax Codes > Add
+- Tax Code `GAUI` · Description "GA SUTA" · Tax Table = state unemployment insurance.
+- SUTA ID = UI account number; blank if unknown, never "Applied For".
+- Employer rate as a decimal (2.62% = 0.0262); state default until the client's notice.
+- Payee MasterTax · Reference `GA0000-010` · End date 12/31/9999 · rate note "Initial Rate Load".
+- ⚠️ *Not confirmed yet: SUTA W-2 ID = FEIN or UI account number.*
+
+**Workers' comp codes** · Maintenance > Payroll > Workers' Compensation Codes > Add
+- One per state + class, always state-prefixed: `LA8810`, `GA8810`. Description "LA Clerical".
+- Cost Factor and Bill Rate 1 only if the client gave rates (decimal); Bill Rates 2–6 = 0.
+- Payee = the company · Payable GL = Payable - Workers' Comp · Expense GL = Employer Workers' Comp Expense · Hazard Group 2.
+
+**Hourly + salary job codes** · Maintenance > Human Resources > Job Codes
+- For every WC code in every state, build Hourly and Salary. Pick Salary Grade first (Hourly Grade 1 = H; Exempt Grade 1 = E).
+- Code `LA8810` · "LA Clerical Hourly" / "LA Clerical Salary" · Employee Type Hourly/Exempt · Job Group Office/Clerical · link the WC code.
+- Update or delete the default LA job codes.
+- *Why: the job code makes an employee hourly or exempt.*
+""",
+    "Salesforce - Details": """
+**Record type** · Salesforce > Account > Details > Account Record Type > Change
+- Click Change next to Prospect Account > Client Account > Next. Click Edit on any field to open the form.
+
+**Account information** · Details > Account Information
+- Account Name and Federal ID match the PIN exactly. DBA Name only if they use one.
+- Client Company Code = the new Netchex code (between DBA and Federal ID).
+- Parent Account only for a child code (build the parent first; check Ultimate Parent Account on the parent).
+- Type = Netchex Client · Pricing Model = PEPM · Package only for DealerTrack.
+- Distributed Invoicing and Seasonal Client = No unless your lead says Yes.
+- ⚠️ *Not confirmed yet: whether the Package field still appears on newer accounts.*
+
+**Average payroll** · Details > Account Financial Status
+- Average Payroll Amount from the analysis document. Not known yet? Enter 0.00 and update before the first direct deposit payroll.
+- *Why: Banking calculates the risk limit from it. Payrolls over it need a debit date override, a wire, or an earlier submission.*
+
+**Points of contact + address** · Details > Designated Points of Contact
+- Payroll, ACH/Banking, Tax, Billing, Human Resources and The Work Number contacts (Benefits if purchased).
+- One person per field; a client email group can be a contact.
+- Shipping Address from the analysis document's Delivery tab.
+- ⚠️ *Not confirmed yet: who fills the Billing Address and from which document.*
+
+**Revenue + implementation details** · Details > Client Information / Implementation Details
+- Netchex Annual Revenue = monthly PEPM from the proposal × 12 (not Hierarchy ARR).
+- Direct Deposit Waiting Period: No + Proof of DD Received if proof given; Yes for a startup.
+- AZ/HI Daylight Savings: check only for Arizona or Hawaii.
+- Check Currently in Implementation (routes cases to the Implementation queue).
+
+**Employer services** · Details > Employer Services Information
+- Primary (and secondary) Payroll Frequency.
+- Payroll Vendor = the client's previous provider; Startup if none. Broker and 401k details if known.
+- Copy/child company: match the parent's services. Click Save.
+""",
+    "Salesforce - Contacts": """
+**Contacts + user access** · Account > Contacts > View All
+- Add every admin on the User Access form plus any your lead names: New Contact > Client Contact.
+- Last Name and Title are required; get the email.
+- Contact already exists on another account? Use Add Relationship instead of a new contact.
+- Check **Able to Request User Access** for Client Admin Form users. At least one contact must have it.
+- *Why: Netchex holds SSNs, 941s, 940s and state account numbers. Support needs to know who can approve access.*
+""",
+    "Salesforce - Assets": """
+**Payroll assets** · Account > Assets > View All > [asset] > Edit
+- For each payroll asset on the proposal: Status Pending > Implemented/In Use > Save.
+- Asset missing? Click New and add it.
+- Yours: Payroll/Tax, ESS/MSS, Time & Attendance, The Work Number, Org Chart, Engagement/Recognition portal, Earned Wage Access, Workers' Comp integration.
+- Leave HR assets (Onboarding & Workflows, Recruit, Performance, NetLearn, Insights, ExpensePath, AskHR, benefits products, E-Verify) for the HR Onboarding Lead.
+""",
+    "Salesforce - Onboarding Details": """
+**Onboarding team** · Account > Onboarding > Onboarding record > Onboarding Details
+- Owner (Change Owner) = Project Manager, if the account has one.
+- Data Specialist = Project Coordinator.
+- Payroll Information > Payroll Onboarding Lead > Save.
+- HR Details tab > HR Onboarding Lead > Save.
+- ⚠️ *Not confirmed yet: field labels are being renamed, and whether survey contacts are still used.*
+""",
+    "Netchex - Client Billing": """
+**Client billing schedule** · Back Office > Enterprise > Client Billing Schedules
+- Payroll Frequency. Collect Taxes checked unless a No-Tax client.
+- Sales Tax box: Texas only. Sales Tax Code: TX = Dallas 8.25%; others = their state.
+- Sales Agent = Addie Kelley · "Payroll Coordinator" = the Project Lead.
+- Check Fee – Premium and enter negatives (Base / Per Check), then Add/Update:
+  - Weekly −18.00 / −1.35
+  - Bi-Weekly & Semi-Monthly −23.00 / −2.10
+  - Monthly −43.00 / −3.65
+
+**Premium Pay billing** (Premium Pay only) · Client Billing Schedules
+- Check Premium Pay, uncheck Netchex Money Movement, zero the $25 stop payment fee.
+
+**Check for errors** · Maintenance > Company Structure > General > Client Billing View
+- Correct entries show no data here. Anything listed is an error to fix.
+""",
+    "Netchex - Company Information": """
+**Demographics** · Maintenance > Company Information > code + Enter > company
+- Company, Trade and W-2 Company Name = legal name from the PIN, ALL CAPS (only the display name may show a DBA).
+- FEIN and address match the PIN exactly. Primary contact, phone and email entered.
+- ⚠️ *Not confirmed yet: which name field must match the PIN.*
+
+**Banking + PIN** · Company Information > Banking Information
+- ACH, Live Check, Operating and Billing Fee accounts match the Funding Authorization Agreement.
+- ACH Contact = the 4-digit EFTPS PIN.
+- Minimum Wage Makeup: restaurants and hotels only.
+
+**Payroll information** · Company Information > Payroll Information
+- Minimum Wage $ = state (one state) or federal (more than one); look it up in Back Office > Minimum Wage.
+- Default Payroll Group (BiWklyHrly, WklyHrly, SemiHrly, MnlyHrly) and Default Job Code.
+- Default Employee Classification: W-2 Tipped (restaurant/hotel), 1099 (contractor-only code), otherwise W-2.
+- Units/Pay Period 40 / 80 / 86.6667 / 173.3334. Allow Manager Self Service checked.
+- Premium Pay only: check Netchex Premium Pay Client.
+
+**Direct deposit date** · Company Information > Direct Deposit
+- Proof of prior DD: Effective Date = implementation start date.
+- No proof or startup: Effective Date = 90 days after the first check date.
+- Live checks only, forever: Opt-Out.
+- Section missing? Confirm the Direct Deposit Authorization feature flag is on.
+- ⚠️ *Not confirmed yet: when Opt-Out is used.*
+""",
+    "Netchex - Claims": """
+**Claims per proposal** · Company Information > Company Claims
+- Engagement Basic for every client. Engagement builds up: Basic > Core > Advanced.
+- Recruit = "Recruit – HigherMe" (never GetHired).
+- Other claims per the Feature Flags Index (link at the top right of this section).
+- Click **Update** at the top of the page.
+- Demo companies: turn on almost everything; skip Daily Pay, NetEngage, Delegate, NetAssist HR.
+- ⚠️ *Not confirmed yet: which claims the builder sets vs the HR Onboarding Lead.*
+""",
+    "Netchex - Feature Flags": """
+**Always-on flags** · Maintenance > Security > New Feature Access > [company]
+- Confirm these are On: New Payroll Engine, Multi-Company Payroll, Payroll Schedules, Suggested Taxes, SecureAct 2.0, Year End Rollover, Engagement Phase One, Recognition Settings, Earned Wage Access, Direct Deposit Authorization, Punch Request (T&A).
+- Most are now on by default or Blocked. Turn on any that are off: toggle > Pending Changes > Confirm Changes.
+- ⚠️ *Not confirmed yet: the always-on list may change. Check the Feature Flags Index.*
+
+**Product flags per proposal** · New Feature Access
+- Scheduler: New Scheduler + Who's In Dashboard.
+- Fillable Forms: Fillable Forms Bulk Download · Insights: Insights · NetLearn: LMS + NetLearn Manage Users.
+- AskHR: AskHR + AskHR Engagement Dashboard.
+- Workflows: Effective Dating Rates, Effective Dating Company Structure, Employee Acknowledgement.
+- First few builds: review with your lead. Demo companies: everything except Demo Only items.
+""",
+    "Netchex - Department Structure": """
+**Div / Business Unit / Department** · Maintenance > Company Structure > Div/Bus/Dept > Add/Edit/Delete
+- Expand All. Add Division > + Business Unit > + Department (codes have character limits).
+- No structure given: 100 – [Company] / 100 – [Company] / 100 – Staff.
+- Large structure: Import with the spec file (Add, div, BU, dept, cost center if asked); CSV without headers.
+- Hide (never delete) the 000 department. No employees may be in it.
+
+**Locations** · Maintenance > Company Structure > General > Locations
+- Main Location 000 carries the main address. Add every other physical work location.
+
+**Positions** · Maintenance > Human Resources > Positions
+- Add or Import (position name + SOC code). Send the spec file to the client to fill in.
+- No positions given: create one per department.
+- *Why: positions drive Insights and salary benchmarking.*
+
+**Payroll schedule** · Payroll > Payroll Settings > Payroll Schedules > Add Schedule
+- Name exactly: Weekly Payroll / Bi-Weekly Payroll / Semi-Monthly Payroll / Monthly Payroll.
+- Frequency, next period start and end, next check date, hours (40 / 80 / 86.6667 / 173.3334).
+- Federal Holiday Banking Rule (usually previous business day) > select company > Save Schedule > Confirm and Save.
+- One schedule per frequency. Send the dates to your lead to confirm with the client.
+
+**Close the year** · Payroll > Utilities > Close the Year
+- Click Close the Year > OK, once. The current year shows; that's expected.
+
+**Payroll group codes** · Maintenance > Payroll > General > Payroll Group Codes
+- Not bi-weekly? Delete the default bi-weekly groups and add the right ones (e.g. WklyHrly + salary group).
+- Description spelled out, frequency, hours, last pay period start/end (current dates), GL account for wages = Regular.
+- M3 group # only for M3 clients; leave the OT fields.
+- Bi-weekly? Still update the defaults' last pay period dates.
+""",
+    "Netchex - Payroll Codes": """
+**Deduction codes** · Maintenance > Payroll > Deductions > +Add
+- Add only what the client needs beyond CIW's defaults. Template or Custom.
+- Decide: pre/post-tax, Box 14, calculation, payroll cycle, reduction (partial/full), Netchex remit/payee.
+
+**Earnings codes** · Maintenance > Payroll > Earnings > +Add
+- Add what's missing; use Custom if a template label looks wrong.
+- Set taxability, Box 14, calculation and options.
+- ⚠️ *Not confirmed yet: whether the Earnings Code email template still goes to the client.*
+
+**Unused codes** · Deductions / Earnings
+- Delete codes the client won't use.
+
+**GL base accounts** · Maintenance > Payroll > General Ledger > Edit Base GL Accounts
+- Add or Import the client's account numbers (number, description, liability/expense/asset). Skip if the client gave none.
+
+**GL mapping** · General Ledger > Manage Expense and Payable Accounts
+- Map the Deductions, Earnings and Taxes tabs; use "only show unmapped". Finish with zero unmapped codes.
+""",
+    "Netchex - Maintenance": """
+**Email/text events** · Maintenance > Human Resources > Email/Text Event Configuration
+- Payroll Invoiced: client in To (Other E-Mail Address).
+- Payroll Submitted, Wire Transfer Initiated, Wire Transfer Received: client + Project Lead.
+
+**Shipping information** · Maintenance > Human Resources > Shipping Information > Edit
+- Shipping Notes: PEPM (note a $0 special hierarchy). FedEx Standard unless local pickup.
+- Shipping fee by FedEx zone (origin ZIP 70433); use the June 2026 zone table in the OneNote.
+- Garnishments: blank if mailed to client, or Mail USPS to Agency + $1.25. Paperless/DD stubs/reports = No. Save.
+- ⚠️ *Not confirmed yet: whether Special Notes stays blank.*
+
+**Payroll, Shipping + W-2 contacts** · Maintenance > Human Resources > Contacts > Add
+- Shipping contact must use a physical address; FedEx can't deliver to a PO Box.
+- PO Box only? Loop in your manager and the sales rep.
+
+**Check header** · Company Information > code + Enter > Paycheck Parameters icon
+- Don't click the company name; click the last icon. Re-select the company code at the top or it won't save.
+- Field 1 name · Field 2 address or DBA · Field 3 city, state, ZIP.
+- Check Display Dept Info, Accrual Info, Saved Signature, Employer Deduction Amounts > Submit.
+- Premium Pay: line 2 "C/O Netchex Payroll" and no signature upload.
+
+**Report Runner** · Back Office > Report Runner > Create/Edit
+- New companies now appear to be set by default. If yours is in the copy list, copy from CIW/OHE/parent (Edge; never edit the settings page).
+- ⚠️ *Not confirmed yet: that this step is now automatic.*
+""",
+    "Netchex - Time & Attendance": """
+**Web terminal** · Time & Attendance > Settings > Web Terminal Setup
+- WEB01 now exists by default. Time clock (punch buttons) or time sheet; time zone offset from Central.
+- Lunch buttons Yes; breaks, department or client/project transfer only if used.
+- Terminal Enabled Yes (No if they don't punch in Netchex).
+- Restrictions per client: IP address, geofence, mobile-only, desktop-only, or none.
+
+**Payroll group rules** · Time & Attendance > Company Rules > Payroll Group Rules
+- Every group: period start date (first Netchex pay period) and cycle (14 days bi-weekly, 7 for the others).
+- Use Current Pay Rates During Pay Confirm: all groups. Auto Decrement: salary exempt only.
+- Unlock timecards after processing: semi-monthly only. Rounding, auto lunch and alerts only if requested.
+- ⚠️ *Not confirmed yet: the midnight rule (day of IN punch).*
+
+**Overtime** · Time & Attendance > Company Rules > Shift Setup
+- Hourly groups: OT after 40 (now automatic). Salary exempt: no OT.
+- Client wants no OT for hourly? Create and close a Salesforce case documenting the request.
+- ⚠️ *Not confirmed yet: that OT is removed from exempt automatically.*
+
+**Terminal group** · Time & Attendance > Company Rules > Terminal Group Setup
+- T01 now exists linked to WEB01. Employees are added after the employee load, not now.
+""",
+    "Salesforce - Cases": """
+All cases: Salesforce > Contact > Cases > New
+
+**Prenote case**
+- Call Segment Banking · Call Topic Client Account Prenote · Origin Internal · Subject = company code.
+- Takes up to 3 business days, so open it early.
+
+**Tax case**
+- Status New · Segment Tax · Topic New Client Set-up · Origin Internal · Subject "New Client Setup – [first check date]".
+- Description: prior balances or none, state abbreviations, docs attached.
+- Assign to your team's tax rep; attach the PIN, funding form and tax docs in Files & Notes.
+
+**User Access case**
+- Segment User Access · Topic New User or Edit User · Subject "User Access – [code]" · list each admin's name and email.
+- Assign to the HR Onboarding Lead (uncheck Assign case to me); attach the User Access form and proposal.
+
+**Check signature case**
+- Assign to the signature team.
+- ⚠️ *Not confirmed yet: fields and current assignees.*
+
+**E-Verify case** (E-Verify only)
+- Segment E-Verify · Topic Activate/Set-up · Subject "[code] – E-Verify" · "Form attached, thank you!"
+- Assign to the HR Onboarding Lead; attach the signed E-Verify form.
+
+**Pay card case**
+- Only if the client wants pay cards.
+- ⚠️ *Not confirmed yet: fields.*
+""",
+}
+
 
 # Pushes the red "N comments" badge on a checklist section bar to the far right.
 CHECKLIST_CSS = """<style>
@@ -1114,8 +1501,17 @@ def _render_build_checklist(builds, checks):
     build_id = st.session_state.get(pick_key)
     if build_id not in labels:
         build_id = list(labels)[-1]       # nothing clicked yet: the most recently added build
-    st.markdown(f"#### ✅ Checklist · {labels[build_id]}")
     b = builds[builds.id == build_id].iloc[0]
+    saved = {r.item_id: r for r in checks[checks.build_id == build_id].itertuples()}
+    h1, h2 = st.columns([3, 1], vertical_alignment="bottom")
+    h1.markdown(f"#### ✅ Checklist · {labels[build_id]}")
+    code = txt(b.company_code) or str(build_id)
+    safe = re.sub(r"[^A-Za-z0-9]+", "_", txt(b.company_name)).strip("_")[:40] or "Build"
+    h2.markdown(_excel_link(export_checklist_excel(b, saved), f"QC_Checklist_{code}_{safe}.xlsx",
+                            "Download checklist",
+                            "This build's checklist as an Excel file: details, every item with its Built / QC / "
+                            "N/A ticks and comments. Ready to print or save to the client folder."),
+                unsafe_allow_html=True)
     status, qc_status = txt(b.status) or "Pending", txt(b.qc_status) or "Pending"
 
     st.markdown(f"**Status:** {STATUS_LABEL.get(status, status)} &nbsp;·&nbsp; "
@@ -1123,8 +1519,6 @@ def _render_build_checklist(builds, checks):
     st.caption("Ticks, N/A, comments and the names below save automatically as you make them.")
     # The tables get fresh keys after each save so they reload the saved values.
     ver = st.session_state.get(f"chk_ver_{build_id}", 0)
-
-    saved = {r.item_id: r for r in checks[checks.build_id == build_id].itertuples()}
 
     st.markdown(CHECKLIST_CSS, unsafe_allow_html=True)
     changes = {}
@@ -1158,8 +1552,13 @@ def _render_build_checklist(builds, checks):
             applicable = ~view["N/A"]
             t1, t2, t3 = st.columns([1, 1, 4])
             links = [l for start, ls in SECTION_LINKS.items() if section.startswith(start) for l in ls]
-            if links:
+            howto = next((h for start, h in SECTION_HOWTO.items() if section.startswith(start)), None)
+            if links or howto:
                 with t3.container(horizontal=True, horizontal_alignment="right"):
+                    if howto:
+                        with st.popover("How to", icon=":material/menu_book:", type="tertiary",
+                                        help="Step-by-step notes for this section"):
+                            st.markdown(howto)
                     for link_label, url, tip in links:
                         st.link_button(link_label, url, type="tertiary", icon=":material/open_in_new:", help=tip)
             for col, field, label in ((t1, "Built", "Tick all Built"), (t2, "QC", "Tick all QC")):
