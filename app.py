@@ -294,9 +294,6 @@ CHECKLIST = [
             ("N03", "The Work Number"),
             ("N04", "Time & Attendance"),
             ("N05", "EE Engagement/Recognition Portal — Basic/Advanced (Community Core)"),
-            ("N16", "Org Chart"),
-            ("N17", "Earned Wage Access"),
-            ("N18", "Workers' Comp Integration"),
         ]),
     ]),
     ("Salesforce - Onboarding Details", "", [
@@ -1192,7 +1189,7 @@ SECTION_HOWTO = {
 **Payroll assets** · Account > Assets > View All > [asset] > Edit
 - For each payroll asset on the proposal: Status Pending > Implemented/In Use > Save.
 - Asset missing? Click New and add it.
-- Yours: Payroll/Tax, ESS/MSS, Time & Attendance, The Work Number, Org Chart, Engagement/Recognition portal, Earned Wage Access, Workers' Comp integration.
+- Yours: Payroll/Tax, ESS/MSS, Time & Attendance, The Work Number, Engagement/Recognition portal.
 - Leave HR assets (Onboarding & Workflows, Recruit, Performance, NetLearn, Insights, ExpensePath, AskHR, benefits products, E-Verify) for the HR Onboarding Lead.
 """,
     "Salesforce - Onboarding Details": """
