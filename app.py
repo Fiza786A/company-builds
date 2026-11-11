@@ -219,12 +219,9 @@ BUILD_FIELDS = {  # column shown in the tracker -> database field, in the order 
     "Built By": "built_by", "QC": "qc_by",                  # then who did each, in the same order
     "Assigned By": "assigned_by", "Due Date": "due_date", "Date of Completion": "completion_date",
 }
-# Column layouts for the Monthly Builds table, switched with the toggle above it.
-BUILD_LAYOUTS = {
-    "Standard view": list(BUILD_FIELDS),
-    "Team view": ["Company Name", "Company Code", "Hierarchy", "Due Date", "Built By", "Status", "QC",
-                  "QC Status", "Assigned By", "Date of Completion", "UA Status", "Balance Status"],
-}
+# Column order of the Monthly Builds table.
+BUILD_COLUMN_ORDER = ["Company Name", "Company Code", "Hierarchy", "Due Date", "Built By", "Status", "QC",
+                      "QC Status", "Assigned By", "Date of Completion", "UA Status", "Balance Status"]
 PROPER_CASE_FIELDS = ("company_name", "hierarchy", "built_by", "assigned_by", "qc_by")
 PERSON_FIELDS = ("built_by", "assigned_by", "qc_by")
 # Implementation Checklist - Direct Sales Clients (updated Nov 2026: the new checklist merged with the
@@ -1003,12 +1000,9 @@ def _builds_editor(builds, frame, key, label):
     leads = with_extras(PAYROLL_LEADS, "assigned_by")
     # The key changes after every save so the table reloads fresh from the database.
     version = st.session_state.get("builds_editor_version", 0)
-    # Two column layouts of the same table; both are editable and save the same way.
-    layout = st.segmented_control("View", list(BUILD_LAYOUTS), default="Standard view", key="builds_layout",
-                                  label_visibility="collapsed") or "Standard view"
     edited = st.data_editor(
         table, key=f"builds_editor_{key}_{version}", hide_index=True, width="stretch", num_rows="dynamic",
-        column_order=BUILD_LAYOUTS[layout],
+        column_order=BUILD_COLUMN_ORDER,
         height=min(35 * len(table) + 75, 700),
         column_config={
             "id": None,
