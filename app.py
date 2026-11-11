@@ -1507,21 +1507,30 @@ def _render_build_checklist(builds, checks):
 
     st.markdown(f"**Status:** {STATUS_LABEL.get(status, status)} &nbsp;·&nbsp; "
                 f"**QC status:** {STATUS_LABEL.get(qc_status, qc_status)}")
-    st.caption("Ticks, N/A, comments and the names below save automatically as you make them.")
-    # The tables get fresh keys after each save so they reload the saved values.
+    st.caption("Ticks, N/A, comments and the names below save automatically. A section's counts "
+               "update when you close it.")
+    # The name/status boxes get fresh keys after each save so they show the saved values.
     ver = st.session_state.get(f"chk_ver_{build_id}", 0)
 
     st.markdown(CHECKLIST_CSS, unsafe_allow_html=True)
-    changes = {}
-    for si, (section, note, _groups) in enumerate(CHECKLIST, 1):
-        items = [it for it in CHECK_ITEMS if it["section"] == section]
-        rows = []
-        for it in items:
-            s = saved.get(it["id"])
-            rows.append({"item_id": it["id"], "Area": it["sub"], "Item": ("★ " if it["key"] else "") + it["item"],
-                         "Built": bool(s.built) if s else False, "QC": bool(s.qc) if s else False,
-                         "N/A": bool(s.na) if s else False, "Comments": (txt(s.comments) if s else "")})
-        df = pd.DataFrame(rows)
+
+    def _refresh_section(si):
+        """Reloads one section from the database (fresh ticks and counts) with a full page rerun."""
+        st.session_state[f"chk_ver_{build_id}_{si}"] = st.session_state.get(f"chk_ver_{build_id}_{si}", 0) + 1
+        st.rerun()
+
+    @st.fragment
+    def _section(si, section, note, rows):
+        """One checklist section. A tick, N/A or comment reruns only this section, which saves it in the
+        background without reloading the rest of the page, so you can keep working straight away."""
+        # Each section has its own reload counter, so refreshing one never disturbs another.
+        sv = st.session_state.get(f"chk_ver_{build_id}_{si}", 0)
+        # While a section is open its table and heading stay exactly as they were when it was opened, so
+        # quiet auto-saves never reload it under your cursor. Closing the section refreshes it.
+        snap_key = f"chk_snap_{build_id}_{si}_{sv}"
+        if snap_key not in st.session_state:
+            st.session_state[snap_key] = rows
+        df = pd.DataFrame(st.session_state[snap_key])
         df["Note"] = df.Comments.map(lambda c: "🔴" if c else "")    # red dot on rows that have a saved comment
         n_notes = int((df.Comments != "").sum())
         sec_app = int((~df["N/A"]).sum())
@@ -1530,37 +1539,40 @@ def _render_build_checklist(builds, checks):
         done = "✅ " if sec_app and sec_built == sec_app and sec_qc == sec_app else ""
         # Shown as a red badge, pushed to the far right of the section bar by CHECKLIST_CSS.
         notes = f" :red-badge[🔴 {n_notes} comment{'s' if n_notes != 1 else ''}]" if n_notes else ""
-        # Remember which sections are open, so a section stays open after an auto-save changes its counts.
+        # Remember which sections are open, so a section stays open when its counts refresh.
         open_key = f"chk_open_{build_id}_{si}"
+        was_open = st.session_state.get(open_key, False)
         exp = st.expander(f"{done}{section}  —  Built {sec_built}/{sec_app} · QC {sec_qc}/{sec_app}{notes}",
-                          expanded=st.session_state.get(open_key, False), on_change="rerun")
+                          expanded=was_open, on_change="rerun")
         st.session_state[open_key] = bool(exp.open)
+        if was_open and not exp.open:
+            _refresh_section(si)             # just closed: reload it with the saved ticks and counts
         with exp:
             if note:
                 st.caption(note)
-            # Tick (or untick) every item in this section at once. Items marked N/A are left alone.
-            view = df.reset_index(drop=True)
-            applicable = ~view["N/A"]
-            t1, t2, t3 = st.columns([1, 1, 4])
             links = [l for start, ls in SECTION_LINKS.items() if section.startswith(start) for l in ls]
             howto = next((h for start, h in SECTION_HOWTO.items() if section.startswith(start)), None)
             if links or howto:
-                with t3.container(horizontal=True, horizontal_alignment="right"):
+                with st.container(horizontal=True, horizontal_alignment="right"):
                     if howto:
                         with st.popover("How to", icon=":material/menu_book:", type="tertiary",
                                         help="Step-by-step notes for this section"):
                             st.markdown(howto)
                     for link_label, url, tip in links:
                         st.link_button(link_label, url, type="tertiary", icon=":material/open_in_new:", help=tip)
+            view = df.reset_index(drop=True)
+            t1, t2, _ = st.columns([1, 1, 4])
+            want_all = {}
             for col, field, label in ((t1, "Built", "Tick all Built"), (t2, "QC", "Tick all QC")):
+                applicable = ~view["N/A"]
                 all_now = bool(applicable.any() and view.loc[applicable, field].all())
-                want = col.checkbox(label, value=all_now, key=f"chk_all{field}_{build_id}_{si}_{ver}",
+                want = col.checkbox(label, value=all_now, key=f"chk_all{field}_{build_id}_{si}_{sv}",
                                     help=f"Ticks {field} for every item in this section (not N/A ones). "
                                          "Untick to clear them all.")
                 if want != all_now:
-                    view.loc[applicable, field] = want
+                    want_all[field] = want
             ed = st.data_editor(
-                view, key=f"chk_{build_id}_{si}_{ver}", hide_index=True, width="stretch",
+                view, key=f"chk_{build_id}_{si}_{sv}", hide_index=True, width="stretch",
                 num_rows="fixed", disabled=["Area", "Item", "Note"],
                 column_config={"item_id": None,
                                "Area": st.column_config.TextColumn("Area", width=200),
@@ -1572,14 +1584,45 @@ def _render_build_checklist(builds, checks):
                                "N/A": st.column_config.CheckboxColumn("N/A", width=55),
                                "Note": st.column_config.TextColumn("💬", width=45,
                                                                    help="🔴 = this item has a comment")})
-            base = df.reset_index(drop=True)
+            ed = ed.copy()
+            refresh_after = False
+            for field, want in want_all.items():
+                ed.loc[~ed["N/A"].astype(bool), field] = want
+            if want_all:
+                refresh_after = True         # Tick all: reload the section so the table shows the new ticks
+            # Compare with what this section last saved, and save only what's new.
+            last_key = f"chk_last_{build_id}_{si}_{sv}"
+            last = st.session_state.setdefault(last_key, {
+                r["item_id"]: (r["Built"], r["QC"], r["N/A"], r["Comments"]) for r in st.session_state[snap_key]})
+            sec_changes = {}
             for i in range(len(ed)):
                 new = (bool(ed.at[i, "Built"]), bool(ed.at[i, "QC"]), bool(ed.at[i, "N/A"]),
                        txt(ed.at[i, "Comments"]))
-                old = (bool(base.at[i, "Built"]), bool(base.at[i, "QC"]), bool(base.at[i, "N/A"]),
-                       txt(base.at[i, "Comments"]))
-                if new != old:
-                    changes[base.at[i, "item_id"]] = new
+                if new != last[ed.at[i, "item_id"]]:
+                    sec_changes[ed.at[i, "item_id"]] = new
+            if sec_changes:
+                try:
+                    save_build_checks([{"build_id": int(build_id), "item_id": k, "built": v[0], "qc": v[1],
+                                        "na": v[2], "comments": v[3] or None} for k, v in sec_changes.items()])
+                    last.update(sec_changes)
+                    st.session_state[f"chk_saved_at_{build_id}_{si}"] = now_local()
+                except Exception as e:
+                    st.error(f"Could not save your last change, it will retry on your next click. ({e})")
+            if refresh_after:
+                _refresh_section(si)
+            saved_at = st.session_state.get(f"chk_saved_at_{build_id}_{si}")
+            st.caption(f"✓ Saved automatically at {saved_at:%I:%M:%S %p}" if saved_at
+                       else "Changes save automatically.")
+
+    for si, (section, note, _groups) in enumerate(CHECKLIST, 1):
+        items = [it for it in CHECK_ITEMS if it["section"] == section]
+        rows = []
+        for it in items:
+            s = saved.get(it["id"])
+            rows.append({"item_id": it["id"], "Area": it["sub"], "Item": ("★ " if it["key"] else "") + it["item"],
+                         "Built": bool(s.built) if s else False, "QC": bool(s.qc) if s else False,
+                         "N/A": bool(s.na) if s else False, "Comments": (txt(s.comments) if s else "")})
+        _section(si, section, note, rows)
 
     # ── Who built it and who QC'd it, editable here ──
     team = [*TEAM_MEMBERS, *sorted({v for c in ("built_by", "qc_by") for v in builds[c]
@@ -1602,23 +1645,15 @@ def _render_build_checklist(builds, checks):
     field_changes = {k: (None if v == NONE else v) for k, v in new_fields.items()
                      if (v if v != NONE else "") != old_fields[k]}
 
-    # Auto-save: any change (a tick, N/A, a comment once you press Enter or click away, or a name/status)
-    # is written to the database straight away, then the checklist reloads with the saved values.
-    n_changes = len(changes) + len(field_changes)
-    if n_changes:
+    # Names and statuses save as soon as they change.
+    if field_changes:
         try:
-            if changes:
-                save_build_checks([{"build_id": int(build_id), "item_id": k, "built": v[0], "qc": v[1], "na": v[2],
-                                    "comments": v[3] or None} for k, v in changes.items()])
-            if field_changes:
-                if field_changes.get("status") == "Completed" and not _to_date(b.completion_date):
-                    field_changes["completion_date"] = today_local()
-                update_build(build_id, field_changes)
-            st.session_state["_toast"] = (f"✅ Saved {n_changes} change{'s' if n_changes != 1 else ''} "
-                                          f"for {txt(b.company_name)}")
+            if field_changes.get("status") == "Completed" and not _to_date(b.completion_date):
+                field_changes["completion_date"] = today_local()
+            update_build(build_id, field_changes)
+            st.session_state["_toast"] = f"✅ Saved for {txt(b.company_name)}"
         except Exception as e:
             st.session_state["_flash_error"] = f"Could not save your change, please try again. ({e})"
-        # Fresh widget keys so the ticks, Tick all boxes and names show the saved state.
         st.session_state[f"chk_ver_{build_id}"] = ver + 1
         st.rerun()
 
@@ -1938,29 +1973,72 @@ def _login_token():
     return hmac.new(str(APP_PASSCODE).strip().encode(), b"company-builds-login", "sha256").hexdigest()
 
 
+def _valid_login_token(saved):
+    return isinstance(saved, str) and bool(saved) and hmac.compare_digest(saved.encode(), _login_token().encode())
+
+
 def _needs_passcode():
     if not APP_PASSCODE or st.session_state.get("authed"):
         return False
     # A browser that signed in before carries the login cookie: let it straight in.
-    saved = st.context.cookies.get(LOGIN_COOKIE, "")
-    if saved and hmac.compare_digest(saved.encode(), _login_token().encode()):
+    # (Read here where the server sees cookies, e.g. locally; on Streamlit Cloud _sync_login_cookie reads it.)
+    try:
+        saved = st.context.cookies.get(LOGIN_COOKIE, "")
+    except Exception:
+        saved = ""
+    if _valid_login_token(saved):
         st.session_state["authed"] = True
         st.session_state.setdefault("started", True)
         return False
     return True
 
 
-def _remember_login():
-    """Saves (and renews) the login cookie in this browser once per visit."""
-    if not APP_PASSCODE or st.session_state.get("login_cookie_set"):
+# Small invisible helper that runs in the browser: it reads the login cookie and hands it to the app,
+# and once you're signed in it saves (and renews) the cookie. Streamlit Cloud doesn't pass browser
+# cookies on to the app, so the browser has to send it this way.
+_LOGIN_BRIDGE_JS = """
+export default function(component) {
+    const { data, setStateValue } = component;
+    const name = data.name;
+    if (data.set) {
+        const secure = window.location.protocol === "https:" ? "; Secure" : "";
+        document.cookie = name + "=" + data.set + "; Max-Age=" + data.maxAge + "; Path=/; SameSite=Lax" + secure;
+        return;
+    }
+    const found = document.cookie.split("; ").find(c => c.startsWith(name + "="));
+    const value = found ? found.slice(name.length + 1) : "";
+    if (value && value !== data.sent) {
+        setStateValue("token", value);
+    }
+}
+"""
+try:
+    _login_bridge = st.components.v2.component("cb_login_bridge", js=_LOGIN_BRIDGE_JS)
+except Exception:          # older Streamlit versions: the login then lasts for this visit only
+    _login_bridge = None
+
+
+def _sync_login_cookie():
+    """Signs in a browser that carries a valid login cookie, and saves the cookie once signed in."""
+    if not APP_PASSCODE or _login_bridge is None:
         return
-    st.session_state["login_cookie_set"] = True
-    import streamlit.components.v1 as components
-    with st.sidebar:   # zero-height helper; in the sidebar it adds no gap to the page
-        components.html(f"""<script>
-const d = window.parent.document, secure = window.parent.location.protocol === "https:" ? "; Secure" : "";
-d.cookie = "{LOGIN_COOKIE}={_login_token()}; Max-Age={LOGIN_DAYS * 86400}; Path=/; SameSite=Lax" + secure;
-</script>""", height=0)
+    authed = bool(st.session_state.get("authed"))
+    data = {"name": LOGIN_COOKIE, "sent": st.session_state.get("login_cookie_seen", "")}
+    if authed:
+        data.update(set=_login_token(), maxAge=LOGIN_DAYS * 86400)
+    try:
+        st.html("<style>.st-key-cb_login_bridge_box { display: none; }</style>")
+        with st.container(key="cb_login_bridge_box"):
+            res = _login_bridge(key="cb_login_bridge", data=data, on_token_change=lambda: None)
+    except Exception:
+        return
+    token = getattr(res, "token", None)
+    if authed or not token:
+        return
+    st.session_state["login_cookie_seen"] = token     # so the browser doesn't keep re-sending it
+    if _valid_login_token(token):
+        st.session_state["authed"] = True
+        st.session_state.setdefault("started", True)
 
 
 def _start():
@@ -1969,7 +2047,7 @@ def _start():
         if not hmac.compare_digest(typed.encode(), str(APP_PASSCODE).strip().encode()):
             st.session_state["passcode_error"] = True
             return
-        st.session_state["authed"] = True       # also saved as a cookie, see _remember_login
+        st.session_state["authed"] = True       # also saved as a cookie, see _sync_login_cookie
         st.session_state.pop("passcode_input", None)
     st.session_state["started"] = True
 
@@ -2170,8 +2248,8 @@ def render_builds_page():
 # ─────────────────────────────────────────────────────────────
 # App
 # ─────────────────────────────────────────────────────────────
+_sync_login_cookie()
 if not _needs_passcode() and st.session_state.get("started"):
-    _remember_login()
     render_builds_page()
 else:
     render_landing_page()
