@@ -1929,8 +1929,38 @@ def _live(render, *args):
 APP_PASSCODE = _secrets_get("APP_PASSCODE")
 
 
+LOGIN_COOKIE = "cb_login"
+LOGIN_DAYS = 30   # stay signed in on this browser for 30 days after the last visit
+
+
+def _login_token():
+    # Derived from the passcode, so changing APP_PASSCODE signs every browser out.
+    return hmac.new(str(APP_PASSCODE).strip().encode(), b"company-builds-login", "sha256").hexdigest()
+
+
 def _needs_passcode():
-    return bool(APP_PASSCODE) and not st.session_state.get("authed")
+    if not APP_PASSCODE or st.session_state.get("authed"):
+        return False
+    # A browser that signed in before carries the login cookie: let it straight in.
+    saved = st.context.cookies.get(LOGIN_COOKIE, "")
+    if saved and hmac.compare_digest(saved.encode(), _login_token().encode()):
+        st.session_state["authed"] = True
+        st.session_state.setdefault("started", True)
+        return False
+    return True
+
+
+def _remember_login():
+    """Saves (and renews) the login cookie in this browser once per visit."""
+    if not APP_PASSCODE or st.session_state.get("login_cookie_set"):
+        return
+    st.session_state["login_cookie_set"] = True
+    import streamlit.components.v1 as components
+    with st.sidebar:   # zero-height helper; in the sidebar it adds no gap to the page
+        components.html(f"""<script>
+const d = window.parent.document, secure = window.parent.location.protocol === "https:" ? "; Secure" : "";
+d.cookie = "{LOGIN_COOKIE}={_login_token()}; Max-Age={LOGIN_DAYS * 86400}; Path=/; SameSite=Lax" + secure;
+</script>""", height=0)
 
 
 def _start():
@@ -1939,7 +1969,7 @@ def _start():
         if not hmac.compare_digest(typed.encode(), str(APP_PASSCODE).strip().encode()):
             st.session_state["passcode_error"] = True
             return
-        st.session_state["authed"] = True       # remembered for this visit, so Home → Get started needs no retyping
+        st.session_state["authed"] = True       # also saved as a cookie, see _remember_login
         st.session_state.pop("passcode_input", None)
     st.session_state["started"] = True
 
@@ -2140,7 +2170,8 @@ def render_builds_page():
 # ─────────────────────────────────────────────────────────────
 # App
 # ─────────────────────────────────────────────────────────────
-if st.session_state.get("started") and not _needs_passcode():
+if not _needs_passcode() and st.session_state.get("started"):
+    _remember_login()
     render_builds_page()
 else:
     render_landing_page()
