@@ -665,6 +665,16 @@ def save_build_checks(rows):
     conn.commit(); conn.close()
 
 
+# "Checklist uploaded" tick for a build. Stored as one extra row in build_checks (built = uploaded),
+# so it needs no database change; it isn't a checklist item, so the counts and the Excel ignore it.
+UPLOAD_ITEM = "_UPLOADED"
+
+
+def _uploaded_ids(checks):
+    """IDs of the builds whose checklist is ticked as uploaded."""
+    return {int(i) for i in checks[(checks.item_id == UPLOAD_ITEM) & checks.built].build_id}
+
+
 def _progress(checks, build_id):
     c = checks[(checks.build_id == build_id) & checks.item_id.isin(CHECK_ITEM_IDS)]   # ignore removed items
     na = int(c.na.sum())
@@ -754,14 +764,18 @@ EXCEL_ICON = ('<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true
               '<path d="M5 9l2.2 3L5 15h1.7l1.3-2 1.3 2H11l-2.2-3L11 9H9.3L8 11 6.7 9z" fill="#fff"/></svg>')
 
 
-def _excel_link(data, file_name, label, tip):
-    """A right-aligned 'Excel' download link (a plain link, so it can carry the Excel icon)."""
+def _excel_link(data, file_name, label, tip, align="right", big=False):
+    """An 'Excel' download link, right-aligned by default (a plain link, so it can carry the Excel icon).
+    big=True makes it a larger button with a little space below it."""
     b64 = base64.b64encode(data).decode()
     mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    icon = EXCEL_ICON.replace('width="22" height="22"', 'width="15" height="15"')
-    return (f'<div style="text-align:right;margin-top:-14px"><a download="{html.escape(file_name)}" '
+    icon_px, pad, font = (19, "6px 14px", "0.92rem") if big else (15, "3px 10px", "0.8rem")
+    icon = EXCEL_ICON.replace('width="22" height="22"', f'width="{icon_px}" height="{icon_px}"')
+    lift = "margin-top:-14px" if align == "right" else ""
+    below = "margin-bottom:10px" if big else ""
+    return (f'<div style="text-align:{align};{lift};{below}"><a download="{html.escape(file_name)}" '
             f'title="{html.escape(tip)}" href="data:{mime};base64,{b64}" style="display:inline-flex;'
-            f'align-items:center;gap:6px;padding:3px 10px;font-size:0.8rem;border:1px solid rgba(128,128,128,.35);'
+            f'align-items:center;gap:8px;padding:{pad};font-size:{font};border:1px solid rgba(128,128,128,.35);'
             f'border-radius:6px;text-decoration:none;color:inherit;font-weight:500;white-space:nowrap">'
             f'{icon}{html.escape(label)}</a></div>')
 
@@ -1400,10 +1414,11 @@ CHECKLIST_CSS = """<style>
 </style>"""
 
 
-def _render_team_overview(builds, people):
+def _render_team_overview(builds, people, checks):
     """'All team members': one row per person. Click a row to open that person's page and their checklists."""
     status = builds.status.map(lambda v: _clean_text(v) or "Pending")
     qc_status = builds.qc_status.map(lambda v: _clean_text(v) or "Pending")
+    uploaded = builds.id.astype(int).isin(_uploaded_ids(checks))
     rows = []
     for p in people:
         mine = builds.built_by.map(lambda v, p=p: p in _people(v))
@@ -1413,7 +1428,8 @@ def _render_team_overview(builds, people):
                      "In progress": int((mine & (status == "In Progress")).sum()),
                      "Pending": int((mine & (status == "Pending")).sum()),
                      "QC'd": int(qcd.sum()),
-                     "Awaiting QC": int((done & ~qcd & (qc_status != NOT_REQUIRED)).sum())})
+                     "Awaiting QC": int((done & ~qcd & (qc_status != NOT_REQUIRED)).sum()),
+                     "Checklist uploaded": int((mine & uploaded).sum())})
     table = pd.DataFrame(rows)
 
     def open_person():
@@ -1427,7 +1443,9 @@ def _render_team_overview(builds, people):
                  selection_mode=["single-row", "single-cell"], height=35 * len(table) + 40,
                  column_config={
                      "QC'd": st.column_config.NumberColumn(help="Their builds with QC status Completed"),
-                     "Awaiting QC": st.column_config.NumberColumn(help="Completed builds whose QC isn't completed yet")})
+                     "Awaiting QC": st.column_config.NumberColumn(help="Completed builds whose QC isn't completed yet"),
+                     "Checklist uploaded": st.column_config.NumberColumn(
+                         help="Their builds whose checklist is ticked as uploaded")})
     st.caption("Counts are by Built By. You can also pick a team member from the dropdown above.")
 
 
@@ -1449,7 +1467,7 @@ def _render_build_checklist(builds, checks):
     ALL = "All team members"
     who = st.selectbox("Team member", [ALL, *TEAM_MEMBERS, *past], key="chk_person")
     if who == ALL:
-        _render_team_overview(builds, [*TEAM_MEMBERS, *past])
+        _render_team_overview(builds, [*TEAM_MEMBERS, *past], checks)
         return
     order = builds.sort_values("id")     # in the order they were added
     if who != ALL:
@@ -1478,11 +1496,16 @@ def _render_build_checklist(builds, checks):
     shown = table.copy()
     for col in ("Status", "QC Status", "UA Status", "Balance Status"):
         shown[col] = shown[col].map(lambda s: STATUS_LABEL.get(s, s) if s else "")
+    uploaded_ids = _uploaded_ids(checks)
+    shown.insert(shown.columns.get_loc("QC Status") + 1, "Checklist Uploaded",
+                 shown["id"].map(lambda i: int(i) in uploaded_ids))
     event = st.dataframe(
         shown, key=f"chk_table_{who}", hide_index=True, width="stretch", on_select="rerun",
         selection_mode=["single-row", "single-cell"], height=min(35 * len(shown) + 40, 400),
         column_config={"id": None,
                        "Company Name": st.column_config.TextColumn("Company Name", pinned=True),
+                       "Checklist Uploaded": st.column_config.CheckboxColumn(
+                           "Checklist Uploaded", help="Ticked on the build's checklist below once it's uploaded"),
                        "Date of Completion": st.column_config.DateColumn("Completed On", format="MM/DD/YYYY"),
                        "Due Date": st.column_config.DateColumn("Due Date", format="MM/DD/YYYY")})
     # Clicking any cell (e.g. the company name) or the tick box at the left of a row opens that build.
@@ -1494,15 +1517,13 @@ def _render_build_checklist(builds, checks):
         build_id = list(labels)[-1]       # nothing clicked yet: the most recently added build
     b = builds[builds.id == build_id].iloc[0]
     saved = {r.item_id: r for r in checks[checks.build_id == build_id].itertuples()}
-    h1, h2 = st.columns([3, 1], vertical_alignment="bottom")
-    h1.markdown(f"#### ✅ Checklist · {labels[build_id]}")
+    st.markdown(f"#### ✅ Checklist · {labels[build_id]}")
     code = txt(b.company_code) or str(build_id)
     safe = re.sub(r"[^A-Za-z0-9]+", "_", txt(b.company_name)).strip("_")[:40] or "Build"
-    h2.markdown(_excel_link(export_checklist_excel(b, saved), f"QC_Checklist_{code}_{safe}.xlsx",
-                            "Download checklist",
-                            "This build's checklist as an Excel file: details, every item with its Built / QC / "
-                            "N/A ticks and comments. Ready to print or save to the client folder."),
-                unsafe_allow_html=True)
+    download_link = _excel_link(export_checklist_excel(b, saved), f"QC_Checklist_{code}_{safe}.xlsx",
+                                "Download checklist",
+                                "This build's checklist as an Excel file: details, every item with its Built / QC / "
+                                "N/A ticks and comments. Ready to print or save to the client folder.", align="left", big=True)
     status, qc_status = txt(b.status) or "Pending", txt(b.qc_status) or "Pending"
 
     st.markdown(f"**Status:** {STATUS_LABEL.get(status, status)} &nbsp;·&nbsp; "
@@ -1662,6 +1683,33 @@ def _render_build_checklist(builds, checks):
         st.info("Every checklist item is built. Set **Status** to Completed above.")
     if applicable and qc == applicable and qc_status != "Completed":
         st.info("Every checklist item is QC'd. Set **QC status** to Completed above.")
+
+    # ── Last check: the finished checklist is uploaded. Saves straight away. ──
+    up = saved.get(UPLOAD_ITEM)
+    is_up = bool(up is not None and up.built)
+    up_key = f"chk_uploaded_{build_id}"
+
+    def _save_uploaded():
+        ticked = bool(st.session_state.get(up_key))
+        try:
+            save_build_checks([{"build_id": int(build_id), "item_id": UPLOAD_ITEM, "built": ticked, "qc": False,
+                                "na": False, "comments": f"{today_local():%m/%d/%Y}" if ticked else None}])
+            st.session_state["_toast"] = ("Checklist marked as uploaded" if ticked
+                                          else "Checklist marked as not uploaded")
+        except Exception as e:
+            st.session_state["_flash_error"] = f"The upload status could not be saved. Please try again. ({e})"
+
+    st.session_state[up_key] = is_up       # always show the saved value
+    # Download the checklist, then tick that it's uploaded.
+    st.space("small")
+    st.markdown(download_link, unsafe_allow_html=True)
+    with st.container(border=True):
+        st.checkbox("Checklist uploaded", key=up_key, on_change=_save_uploaded,
+                    help="Shown in the Checklist Uploaded column of the team member's builds table.")
+        if is_up and _clean_text(up.comments):
+            st.caption(f"Uploaded on {_clean_text(up.comments)}")
+        else:
+            st.caption("Confirm once the completed checklist has been downloaded and uploaded.")
 
 
 
