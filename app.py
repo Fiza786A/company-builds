@@ -1709,7 +1709,7 @@ def _render_build_checklist(builds, checks):
         if is_up and _clean_text(up.comments):
             st.caption(f"Uploaded on {_clean_text(up.comments)}")
         else:
-            st.caption("Confirm once the completed checklist has been downloaded and uploaded.")
+            st.caption("Confirm once the completed checklist has been downloaded and uploaded to the S drive.")
 
 
 
