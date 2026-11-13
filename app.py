@@ -172,7 +172,7 @@ def sqlite_conn():
     if "comments" not in cols:
         conn.execute("ALTER TABLE build_checks ADD COLUMN comments TEXT")
     bcols = [r[1] for r in conn.execute("PRAGMA table_info(builds)")]
-    for col in ("ua_status", "balance_status"):
+    for col in ("ua_status", "balance_status", "qc_completion_date"):
         if col not in bcols:
             conn.execute(f"ALTER TABLE builds ADD COLUMN {col} TEXT")
     conn.commit()
@@ -206,22 +206,29 @@ UA_STATUSES = ["Pending", "In Progress", "Completed", NOT_REQUIRED, WAIT_CLIENT,
 BALANCE_STATUSES = ["Pending", "In Progress", "Completed", WAIT_CLIENT, WAIT_INTERNAL]
 EXTRA_STATUS = {"ua_status": UA_STATUSES, "balance_status": BALANCE_STATUSES}
 EXTRA_COLUMNS = {"enabled": True}   # turns off if the database doesn't have these columns yet
+# QC Completed date: filled in automatically when QC Status is set to Completed.
+QC_DATE = "qc_completion_date"
+QC_DATE_COLUMN = {"enabled": True}  # turns off if the database doesn't have this column yet
 # Payroll Leads who assign builds (US team). Add names here as needed.
 PAYROLL_LEADS = ["Chelsi", "Dakota", "Jessikah", "Kristin", "Lauren", "Macy", "Tiffany"]
 
 BUILD_COLS = ["id", "company_name", "company_code", "hierarchy", "status", "completion_date",
-              "due_date", "built_by", "assigned_by", "qc_by", "qc_status", "ua_status", "balance_status"]
+              "due_date", "built_by", "assigned_by", "qc_by", "qc_status", "ua_status", "balance_status",
+              "qc_completion_date"]
 CHECK_COLS = ["build_id", "item_id", "built", "qc", "na", "comments"]
 BUILD_FIELDS = {  # column shown in the tracker -> database field, in the order the tables show them
     "Company Name": "company_name", "Company Code": "company_code", "Hierarchy": "hierarchy",
     "Status": "status", "QC Status": "qc_status",          # the two statuses side by side
     "UA Status": "ua_status", "Balance Status": "balance_status",   # extra tracking, not counted in totals
     "Built By": "built_by", "QC": "qc_by",                  # then who did each, in the same order
-    "Assigned By": "assigned_by", "Due Date": "due_date", "Date of Completion": "completion_date",
+    "Assigned By": "assigned_by", "Due Date": "due_date", "Build Completed": "completion_date",
+    "QC Completed": "qc_completion_date",
 }
+DATE_COLUMNS = ("Build Completed", "QC Completed", "Due Date")
+DATE_FIELDS = ("completion_date", "qc_completion_date", "due_date")
 # Column order of the Monthly Builds table.
 BUILD_COLUMN_ORDER = ["Company Name", "Company Code", "Hierarchy", "Due Date", "Built By", "Status", "QC",
-                      "QC Status", "Assigned By", "Date of Completion", "UA Status", "Balance Status"]
+                      "QC Status", "Assigned By", "Build Completed", "QC Completed", "UA Status", "Balance Status"]
 PROPER_CASE_FIELDS = ("company_name", "hierarchy", "built_by", "assigned_by", "qc_by")
 PERSON_FIELDS = ("built_by", "assigned_by", "qc_by")
 # Implementation Checklist - Direct Sales Clients (updated Nov 2026: the new checklist merged with the
@@ -535,23 +542,30 @@ def _clean_text(v):
 
 def load_builds():
     if USE_SUPABASE:
-        try:
-            df = pd.DataFrame(_fetch_all("builds", ",".join(BUILD_COLS)), columns=BUILD_COLS)
-            EXTRA_COLUMNS["enabled"] = True
-        except Exception:
-            # Database doesn't have the UA/Balance columns yet: load without them (shown blank, not saved).
-            cols = [c for c in BUILD_COLS if c not in EXTRA_STATUS]
-            df = pd.DataFrame(_fetch_all("builds", ",".join(cols)), columns=cols)
-            for c in EXTRA_STATUS:
-                df[c] = None
-            EXTRA_COLUMNS["enabled"] = False
+        # If the database is missing newer columns (QC Completed, then UA/Balance), load without them:
+        # they're shown blank and not saved until the column is added.
+        attempts = [(True, True), (False, True), (False, False)]   # (QC date, UA/Balance)
+        for i, (with_qc_date, with_extras) in enumerate(attempts):
+            cols = [c for c in BUILD_COLS if (with_qc_date or c != QC_DATE)
+                    and (with_extras or c not in EXTRA_STATUS)]
+            try:
+                df = pd.DataFrame(_fetch_all("builds", ",".join(cols)), columns=cols)
+            except Exception:
+                if i == len(attempts) - 1:
+                    raise
+                continue
+            for c in BUILD_COLS:
+                if c not in df.columns:
+                    df[c] = None
+            QC_DATE_COLUMN["enabled"], EXTRA_COLUMNS["enabled"] = with_qc_date, with_extras
+            break
     else:
         conn = sqlite_conn()
         try:
             df = pd.read_sql_query(f"SELECT {', '.join(BUILD_COLS)} FROM builds", conn)
         finally:
             conn.close()
-    for col in ("completion_date", "due_date"):
+    for col in DATE_FIELDS:
         df[col] = df[col].map(_to_date).astype(object)
     for col in ("company_name", "company_code", "hierarchy", "status", "built_by", "assigned_by", "qc_by", "qc_status"):
         df[col] = df[col].map(_clean_text).astype(object)
@@ -620,8 +634,9 @@ def _db_value(v):
 
 
 def _db_fields(fields):
-    """Leave out UA/Balance when the database doesn't have those columns yet."""
-    return {k: _db_value(v) for k, v in fields.items() if EXTRA_COLUMNS["enabled"] or k not in EXTRA_STATUS}
+    """Leave out UA/Balance and QC Completed when the database doesn't have those columns yet."""
+    return {k: _db_value(v) for k, v in fields.items()
+            if (EXTRA_COLUMNS["enabled"] or k not in EXTRA_STATUS) and (QC_DATE_COLUMN["enabled"] or k != QC_DATE)}
 
 
 def insert_builds(rows):
@@ -687,7 +702,8 @@ def _builds_table(frame):
     for r in frame.itertuples():
         rows.append({
             "id": r.id, "Company Name": r.company_name, "Company Code": r.company_code, "Hierarchy": r.hierarchy,
-            "Status": r.status, "Date of Completion": r.completion_date, "Due Date": r.due_date,
+            "Status": r.status, "Build Completed": r.completion_date, "QC Completed": r.qc_completion_date,
+            "Due Date": r.due_date,
             "Built By": r.built_by, "Assigned By": r.assigned_by, "QC": r.qc_by, "QC Status": r.qc_status,
             "UA Status": r.ua_status, "Balance Status": r.balance_status,
         })
@@ -702,7 +718,7 @@ def _builds_table(frame):
 
 
 def _norm(field, value):
-    if field in ("completion_date", "due_date"):
+    if field in DATE_FIELDS:
         return _to_date(value)
     text = _clean_text(value)
     if field == "company_code" and text:
@@ -739,7 +755,7 @@ def _write_sheet(ws, title, headers, rows, date_cols=(), status_cols=()):
 
 def _builds_rows(table):
     headers = [*BUILD_FIELDS]
-    return headers, [[py(r[h]) if h not in ("Date of Completion", "Due Date") else r[h] for h in headers]
+    return headers, [[py(r[h]) if h not in DATE_COLUMNS else r[h] for h in headers]
                      for _, r in table.iterrows()]
 
 
@@ -751,7 +767,7 @@ def export_builds_excel(table, label):
     ws.title = "Company Builds"
     headers, rows = _builds_rows(table)
     _write_sheet(ws, f"Company Builds – {label}", headers, rows,
-                 date_cols=("Date of Completion", "Due Date"), status_cols=("Status", "QC Status"))
+                 date_cols=DATE_COLUMNS, status_cols=("Status", "QC Status"))
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -813,7 +829,8 @@ def export_checklist_excel(b, saved):
     details = [("Company Code", txt(b.company_code)), ("Hierarchy", txt(b.hierarchy)),
                ("Built By", txt(b.built_by)), ("Status", status),
                ("QC'd By", txt(b.qc_by)), ("QC Status", qc_status),
-               ("Due Date", day(b.due_date)), ("Completed On", day(b.completion_date)),
+               ("Due Date", day(b.due_date)), ("Build Completed", day(b.completion_date)),
+               ("QC Completed", day(getattr(b, QC_DATE, None))),
                ("Progress", f"Built {n_built}/{len(applicable)} · QC {n_qc}/{len(applicable)}"),
                ("Downloaded", f"{now_local():%m/%d/%Y %I:%M %p} IST")]
     ws.append([])
@@ -916,13 +933,13 @@ def export_all_builds_excel(builds, raines):
 
     headers, rows = _builds_rows(table)
     _write_sheet(wb.create_sheet("Company Builds"), f"Company Builds – all months (as of {stamp})", headers, rows,
-                 date_cols=("Date of Completion", "Due Date"), status_cols=("Status", "QC Status"))
+                 date_cols=DATE_COLUMNS, status_cols=("Status", "QC Status"))
 
     r = raines.sort_values(["completion_date", "company_name"])
     _write_sheet(wb.create_sheet("Raines Builds"), "Raines Builds",
-                 ["Company Code", "Company Name", "Built By", "Status", "Date of Completion"],
+                 ["Company Code", "Company Name", "Built By", "Status", "Build Completed"],
                  [[x.company_code, x.company_name, x.built_by, "Completed", x.completion_date] for x in r.itertuples()],
-                 date_cols=("Date of Completion",), status_cols=("Status",))
+                 date_cols=("Build Completed",), status_cols=("Status",))
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -1023,7 +1040,10 @@ def _builds_editor(builds, frame, key, label):
             "Hierarchy": st.column_config.TextColumn("Hierarchy", width=130),
             "Status": st.column_config.SelectboxColumn("Status", options=BUILD_STATUSES, default="Pending", width=125,
                                                        format_func=lambda s: STATUS_LABEL.get(s, s)),
-            "Date of Completion": st.column_config.DateColumn("Completed On", format="MM/DD/YYYY", width=120),
+            "Build Completed": st.column_config.DateColumn("Build Completed", format="MM/DD/YYYY", width=120),
+            "QC Completed": st.column_config.DateColumn(
+                "QC Completed", format="MM/DD/YYYY", width=120,
+                help="Filled in automatically when QC Status is set to Completed. You can also edit it."),
             "Due Date": st.column_config.DateColumn("Due Date", format="MM/DD/YYYY", width=100),
             "Built By": st.column_config.SelectboxColumn("Built By", options=team, width=100),
             "Assigned By": st.column_config.SelectboxColumn("Assigned By", options=leads, width=105),
@@ -1088,10 +1108,14 @@ def _builds_editor(builds, frame, key, label):
         for values in inserts:
             if values["status"] == "Completed" and not values["completion_date"]:
                 values["completion_date"] = today
+            if values["qc_status"] == "Completed" and not values[QC_DATE]:
+                values[QC_DATE] = today
         insert_builds(inserts)
         for rid, diff, values in updates:
             if values["status"] == "Completed" and not values["completion_date"]:
                 diff["completion_date"] = today
+            if values["qc_status"] == "Completed" and not values[QC_DATE]:
+                diff[QC_DATE] = today
             update_build(rid, diff)
         parts = [f"{len(inserts)} new build{'s' if len(inserts) != 1 else ''}" if inserts else "",
                  f"{len(updates)} update{'s' if len(updates) != 1 else ''}" if updates else ""]
@@ -1506,7 +1530,8 @@ def _render_build_checklist(builds, checks):
                        "Company Name": st.column_config.TextColumn("Company Name", pinned=True),
                        "Checklist Uploaded": st.column_config.CheckboxColumn(
                            "Checklist Uploaded", help="Ticked on the build's checklist below once it's uploaded"),
-                       "Date of Completion": st.column_config.DateColumn("Completed On", format="MM/DD/YYYY"),
+                       "Build Completed": st.column_config.DateColumn("Build Completed", format="MM/DD/YYYY"),
+                       "QC Completed": st.column_config.DateColumn("QC Completed", format="MM/DD/YYYY"),
                        "Due Date": st.column_config.DateColumn("Due Date", format="MM/DD/YYYY")})
     # Clicking any cell (e.g. the company name) or the tick box at the left of a row opens that build.
     picked = event.selection.rows or [c[0] for c in event.selection.cells]
@@ -1671,6 +1696,8 @@ def _render_build_checklist(builds, checks):
         try:
             if field_changes.get("status") == "Completed" and not _to_date(b.completion_date):
                 field_changes["completion_date"] = today_local()
+            if field_changes.get("qc_status") == "Completed" and not _to_date(getattr(b, QC_DATE, None)):
+                field_changes[QC_DATE] = today_local()
             update_build(build_id, field_changes)
             st.session_state["_toast"] = f"✅ Saved for {txt(b.company_name)}"
         except Exception as e:
@@ -1988,9 +2015,9 @@ def _render_raines(raines):
     with right.expander(f"All {len(raines)} Raines builds"):
         table = raines.sort_values(["completion_date", "company_name"]).rename(columns={
             "company_code": "Company Code", "company_name": "Company Name", "built_by": "Built By",
-            "completion_date": "Completed On"})[["Company Code", "Company Name", "Built By", "Completed On"]]
+            "completion_date": "Build Completed"})[["Company Code", "Company Name", "Built By", "Build Completed"]]
         st.dataframe(table, hide_index=True, width="stretch",
-                     column_config={"Completed On": st.column_config.DateColumn(format="MM/DD/YYYY")})
+                     column_config={"Build Completed": st.column_config.DateColumn(format="MM/DD/YYYY")})
 
 
 @st.fragment(run_every="30s")
