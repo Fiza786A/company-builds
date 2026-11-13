@@ -1018,6 +1018,10 @@ def _builds_editor(builds, frame, key, label):
     table = _filter_builds(_builds_table(frame), key)
     st.caption("Click a cell to edit (saves automatically) · add a build in the empty last row · "
                "to delete, tick the box at the left of a row and click 🗑️")
+    if USE_SUPABASE and not QC_DATE_COLUMN["enabled"]:
+        st.warning("QC Completed dates can't be saved yet: the database has no qc_completion_date column. "
+                   "In Supabase → SQL Editor, run: alter table builds add column if not exists "
+                   "qc_completion_date date; notify pgrst, 'reload schema';  — then refresh this page.")
 
     def with_extras(base, *cols):
         """Dropdown choices: the standard list, plus any other names already saved (e.g. older builds)."""
