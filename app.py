@@ -1032,7 +1032,9 @@ def _builds_editor(builds, frame, key, label):
     leads = with_extras(PAYROLL_LEADS, "assigned_by")
     # The key changes after every save so the table reloads fresh from the database.
     version = st.session_state.get("builds_editor_version", 0)
-    edited = st.data_editor(
+    _keep_scroll_position()     # so a save doesn't jump you back to the top of the page or the table
+    keep_box = st.container(key=f"cbkeep_builds_{key}")
+    edited = keep_box.data_editor(
         table, key=f"builds_editor_{key}_{version}", hide_index=True, width="stretch", num_rows="dynamic",
         column_order=BUILD_COLUMN_ORDER,
         height=min(35 * len(table) + 75, 700),
@@ -2095,6 +2097,75 @@ try:
     _login_bridge = st.components.v2.component("cb_login_bridge", js=_LOGIN_BRIDGE_JS)
 except Exception:          # older Streamlit versions: the login then lasts for this visit only
     _login_bridge = None
+
+
+# Small invisible helper that keeps your place: the builds table reloads after every save, which
+# would jump the page (and the table's own scroll) back to the top. It remembers where you had
+# scrolled to and puts you back there once the table has reloaded.
+_SCROLL_KEEPER_JS = """
+export default function(component) {
+    if (window.__cbKeep) return;
+    const keep = window.__cbKeep = { page: null, grids: {}, nodes: {}, active: 0, mouse: false, until: 0 };
+    const WRAP = '[class*="st-key-cbkeep_"]';
+    const wrapName = el => { const w = el.closest(WRAP); return w ? [...w.classList].find(c => c.startsWith("st-key-cbkeep_")) : null; };
+    const touch = () => { keep.active = Date.now(); keep.until = 0; };
+    ["wheel", "touchmove", "keydown"].forEach(ev => document.addEventListener(ev, touch, true));
+    document.addEventListener("mousedown", () => { keep.mouse = true; touch(); }, true);
+    document.addEventListener("mouseup", () => { keep.mouse = false; }, true);
+    const userScrolling = () => keep.mouse || Date.now() - keep.active < 500;
+    const gridsPresent = () => [...document.querySelectorAll(WRAP)].every(w => w.querySelector(".dvn-scroller"));
+    document.addEventListener("scroll", e => {
+        if (!userScrolling() || Date.now() < keep.until) return;
+        const t = e.target === document ? document.scrollingElement : e.target;
+        if (!(t instanceof Element)) return;
+        if (t.classList.contains("dvn-scroller")) {
+            const name = wrapName(t);
+            if (name) keep.grids[name] = { left: t.scrollLeft, top: t.scrollTop };
+        } else if (!t.closest(".dvn-scroller") && gridsPresent()) {
+            keep.page = { el: t, top: t.scrollTop };
+        }
+    }, true);
+    const restore = () => {
+        if (keep.page && keep.page.el.isConnected && Math.abs(keep.page.el.scrollTop - keep.page.top) > 2)
+            keep.page.el.scrollTop = keep.page.top;
+        document.querySelectorAll(WRAP).forEach(w => {
+            const name = wrapName(w), g = keep.grids[name], s = w.querySelector(".dvn-scroller");
+            if (g && s) { s.scrollLeft = g.left; s.scrollTop = g.top; }
+        });
+    };
+    new MutationObserver(() => {
+        let fresh = false;
+        document.querySelectorAll(WRAP).forEach(w => {
+            const name = wrapName(w), s = w.querySelector(".dvn-scroller");
+            if (s && keep.nodes[name] !== s) { keep.nodes[name] = s; fresh = true; }
+        });
+        if (!fresh) return;
+        const start = Date.now();
+        keep.until = start + 1500;
+        const loop = () => {
+            if (keep.active > start || Date.now() > start + 1500) return;
+            restore();
+            requestAnimationFrame(loop);
+        };
+        requestAnimationFrame(loop);
+    }).observe(document.body, { childList: true, subtree: true });
+}
+"""
+try:
+    _scroll_keeper = st.components.v2.component("cb_scroll_keeper", js=_SCROLL_KEEPER_JS)
+except Exception:
+    _scroll_keeper = None
+
+
+def _keep_scroll_position():
+    if _scroll_keeper is None:
+        return
+    try:
+        st.html("<style>.st-key-cb_scroll_keeper_box { display: none; }</style>")
+        with st.container(key="cb_scroll_keeper_box"):
+            _scroll_keeper(key="cb_scroll_keeper", data={})
+    except Exception:
+        pass
 
 
 def _sync_login_cookie():
