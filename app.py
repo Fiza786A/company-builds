@@ -960,10 +960,14 @@ def _filter_builds(table, key):
     def people_in(col):
         return sorted({p for v in table[col] for p in _people(v)})
 
+    def values_in(col):
+        return sorted({v for v in table[col] if isinstance(v, str) and v.strip()}, key=str.lower)
+
     # One clean row: a search bar, a "Filters" button that opens a small panel, and Clear.
     keys = {"Status": f"flt_st_{key}", "QC Status": f"flt_qs_{key}", "UA Status": f"flt_ua_{key}",
             "Balance Status": f"flt_bal_{key}", "Built By": f"flt_bb_{key}",
-            "QC": f"flt_qb_{key}", "Assigned By": f"flt_ab_{key}"}
+            "QC": f"flt_qb_{key}", "Assigned By": f"flt_ab_{key}",
+            "Company Name": f"flt_cn_{key}", "Company Code": f"flt_cc_{key}"}
     q_key = f"flt_q_{key}"
     n_active = sum(bool(st.session_state.get(k)) for k in keys.values())
 
@@ -990,6 +994,10 @@ def _filter_builds(table, key):
             "QC": st.multiselect("QC", people_in("QC"), key=keys["QC"], placeholder="All"),
             "Assigned By": st.multiselect("Assigned By", people_in("Assigned By"), key=keys["Assigned By"],
                                           placeholder="All"),
+            "Company Name": st.multiselect("Company Name", values_in("Company Name"), key=keys["Company Name"],
+                                           placeholder="All"),
+            "Company Code": st.multiselect("Company Code", values_in("Company Code"), key=keys["Company Code"],
+                                           placeholder="All"),
         }
     c3.button("Clear", key=f"flt_clear_{key}", on_click=clear, width="stretch",
               disabled=not (n_active or st.session_state.get(q_key)))
@@ -1001,7 +1009,7 @@ def _filter_builds(table, key):
     for col, chosen in picks.items():
         if not chosen:
             continue
-        if col in ("Status", "QC Status", "UA Status", "Balance Status"):
+        if col in ("Status", "QC Status", "UA Status", "Balance Status", "Company Name", "Company Code"):
             keep &= table[col].isin(chosen)
         else:
             keep &= table[col].map(lambda v: any(p in chosen for p in _people(v)))
