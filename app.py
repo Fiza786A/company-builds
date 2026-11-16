@@ -1855,6 +1855,14 @@ def _render_month(builds, pick_month):
                     text=f"QC completed: {int(qc_done.sum())} of {qc_base} completed builds")
 
     # ── Every build in the month: edit, add or delete right here ──
+    _month_builds_table(pick_month)
+
+
+@st.fragment
+def _month_builds_table(pick_month):
+    """The Monthly Builds table, like a checklist section: an edit reruns only this table, which saves
+    it in the background without reloading (or fading) the rest of the page."""
+    builds = load_builds()
     _builds_editor(builds, _month_frame(builds, pick_month), key=f"month_{pick_month}", label=f"{pick_month:%B %Y}")
 
 
