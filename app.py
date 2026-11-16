@@ -5,6 +5,7 @@ Data: Supabase (SUPABASE_URL / SUPABASE_KEY in secrets), or a local SQLite file 
 """
 import base64
 import calendar
+import hashlib
 import hmac
 import html
 import os
@@ -651,6 +652,20 @@ def insert_builds(rows):
     conn.commit(); conn.close()
 
 
+def insert_build(row):
+    """Adds one build and returns its new id."""
+    row = _db_fields(row)
+    if USE_SUPABASE:
+        res = get_supabase().table("builds").insert(row).execute()
+        return int(res.data[0]["id"])
+    cols = list(BUILD_FIELDS.values())
+    conn = sqlite_conn()
+    cur = conn.execute(f"INSERT INTO builds({','.join(cols)}) VALUES({','.join(':' + c for c in cols)})",
+                       {c: row.get(c) for c in cols})
+    conn.commit(); new_id = cur.lastrowid; conn.close()
+    return int(new_id)
+
+
 def update_build(build_id, fields):
     fields = _db_fields(fields)
     if not fields:
@@ -1021,11 +1036,13 @@ def _filter_builds(table, key):
 
 def _builds_editor(builds, frame, key, label):
     """Editable builds table: click a cell to edit, add a row at the bottom, or select rows and delete them.
-    Edits and new rows save automatically; deleting asks for confirmation first."""
+    Edits and new rows save automatically in the background; deleting asks for confirmation first."""
     frame = frame.sort_values("id")      # in the order they were added; new builds go at the bottom
     table = _filter_builds(_builds_table(frame), key)
-    st.caption("Click a cell to edit (saves automatically) · add a build in the empty last row · "
+    fresh = table
+    st.caption("Click a cell to edit (saves automatically, keep going) · add a build in the empty last row · "
                "to delete, tick the box at the left of a row and click 🗑️")
+    save_bar = st.container()           # save status and delete confirmation show here
     if USE_SUPABASE and not QC_DATE_COLUMN["enabled"]:
         st.warning("QC Completed dates can't be saved yet: the database has no qc_completion_date column. "
                    "In Supabase → SQL Editor, run: alter table builds add column if not exists "
@@ -1038,12 +1055,22 @@ def _builds_editor(builds, frame, key, label):
 
     team = with_extras(TEAM_MEMBERS, "built_by", "qc_by")
     leads = with_extras(PAYROLL_LEADS, "assigned_by")
-    # The key changes after every save so the table reloads fresh from the database.
+    # Each change saves in the background while the table stays as it is, so you can keep making
+    # entries one after another. The table only reloads from the database when it needs to show
+    # something new: a build was added or deleted, a date was filled in, or the filters changed.
     version = st.session_state.get("builds_editor_version", 0)
-    _keep_scroll_position()     # so a save doesn't jump you back to the top of the page or the table
+    filt_sig = hashlib.md5(repr(sorted((k, str(v)) for k, v in st.session_state.items()
+                                       if isinstance(k, str) and k.startswith("flt_") and k.endswith(f"_{key}")))
+                           .encode()).hexdigest()[:8]
+    tag = f"{key}_{version}_{filt_sig}"
+    for old_k in [k for k in st.session_state if isinstance(k, str)
+                  and k.startswith((f"builds_snap_{key}_", f"builds_last_{key}_")) and not k.endswith(tag)]:
+        del st.session_state[old_k]
+    table = st.session_state.setdefault(f"builds_snap_{tag}", table)   # what the table shows until it reloads
+    _keep_scroll_position()     # so a reload doesn't jump you back to the top of the page or the table
     keep_box = st.container(key=f"cbkeep_builds_{key}")
     edited = keep_box.data_editor(
-        table, key=f"builds_editor_{key}_{version}", hide_index=True, width="stretch", num_rows="dynamic",
+        table, key=f"builds_editor_{tag}", hide_index=True, width="stretch", num_rows="dynamic",
         column_order=BUILD_COLUMN_ORDER,
         height=min(35 * len(table) + 75, 700),
         column_config={
@@ -1073,6 +1100,9 @@ def _builds_editor(builds, frame, key, label):
         })
 
     originals = {int(r["id"]): r for _, r in table.iterrows()}
+    # What each build looked like when it was last saved, so only real changes are written.
+    last = st.session_state.setdefault(f"builds_last_{tag}", {
+        rid: {f: _norm(f, r[c]) for c, f in BUILD_FIELDS.items()} for rid, r in originals.items()})
     inserts, updates, problems = [], [], []
     for _, r in edited.iterrows():
         values = {f: _norm(f, r[c]) for c, f in BUILD_FIELDS.items()}
@@ -1087,56 +1117,69 @@ def _builds_editor(builds, frame, key, label):
             values["status"] = values["status"] or "Pending"
             inserts.append(values)
         else:
-            old = {f: _norm(f, originals[int(rid)][c]) for c, f in BUILD_FIELDS.items()}
-            diff = {k: v for k, v in values.items() if v != old[k]}
+            diff = {k: v for k, v in values.items() if v != last[int(rid)][k]}
             if diff:
                 updates.append((int(rid), diff, values))
 
-    for msg in dict.fromkeys(problems):
-        st.warning(msg + " Your other edits will save once it has one.")
-
-    # Deleting: rows removed in the table are only deleted from the database after confirming.
     kept = {int(i) for i in edited["id"] if i is not None and not pd.isna(i)}
     removed = [rid for rid in originals if rid not in kept]
-    if removed:
-        names = ", ".join(str(originals[rid]["Company Name"]) for rid in removed[:5]) + ("…" if len(removed) > 5 else "")
-        st.error(f"Delete {len(removed)} build{'s' if len(removed) != 1 else ''}: **{names}**? "
-                 "This also removes their QC checklist and can't be undone.")
-        d1, d2, _ = st.columns([1, 1, 3])
-        if d1.button("🗑️ Yes, delete", type="primary", key=f"del_yes_{key}_{version}"):
-            try:
-                delete_builds(removed)
-                st.session_state["_toast"] = f"🗑️ Deleted {len(removed)} build{'s' if len(removed) != 1 else ''}"
-            except Exception as e:
-                st.session_state["_flash_error"] = str(e)
-            st.session_state["builds_editor_version"] = version + 1
-            st.rerun()
-        if d2.button("Cancel", key=f"del_no_{key}_{version}"):
-            st.session_state["builds_editor_version"] = version + 1
-            st.rerun()
-        return
 
-    # Auto-save: as soon as an edit is made (and every row has a Company Name), write it to the database.
-    if (inserts or updates) and not problems:
-        today = today_local()
-        for values in inserts:
-            if values["status"] == "Completed" and not values["completion_date"]:
-                values["completion_date"] = today
-            if values["qc_status"] == "Completed" and not values[QC_DATE]:
-                values[QC_DATE] = today
-        insert_builds(inserts)
-        for rid, diff, values in updates:
-            if values["status"] == "Completed" and not values["completion_date"]:
-                diff["completion_date"] = today
-            if values["qc_status"] == "Completed" and not values[QC_DATE]:
-                diff[QC_DATE] = today
-            update_build(rid, diff)
-        parts = [f"{len(inserts)} new build{'s' if len(inserts) != 1 else ''}" if inserts else "",
-                 f"{len(updates)} update{'s' if len(updates) != 1 else ''}" if updates else ""]
-        st.session_state["_toast"] = "✅ Saved " + " and ".join(p for p in parts if p)
+    def reload_table():
         st.session_state["builds_editor_version"] = version + 1
         st.rerun()
-    st.download_button(f"📥 Download Excel · {label}", data=export_builds_excel(table, label),
+
+    with save_bar:
+        for msg in dict.fromkeys(problems):
+            st.warning(msg + " That row saves once it has one.")
+
+        # Deleting: rows removed in the table are only deleted from the database after confirming.
+        if removed:
+            names = ", ".join(str(originals[rid]["Company Name"]) for rid in removed[:5]) + ("…" if len(removed) > 5 else "")
+            st.error(f"Delete {len(removed)} build{'s' if len(removed) != 1 else ''}: **{names}**? "
+                     "This also removes their QC checklist and can't be undone.")
+            d1, d2, _ = st.columns([1, 1, 3])
+            if d1.button("🗑️ Yes, delete", type="primary", key=f"del_yes_{key}_{version}"):
+                try:
+                    delete_builds(removed)
+                    st.session_state["_toast"] = f"🗑️ Deleted {len(removed)} build{'s' if len(removed) != 1 else ''}"
+                except Exception as e:
+                    st.session_state["_flash_error"] = str(e)
+                reload_table()
+            if d2.button("Cancel", key=f"del_no_{key}_{version}"):
+                reload_table()
+
+    # Save in the background: each change is written as soon as it's made, without reloading the table.
+    if inserts or updates:
+        today = today_local()
+        needs_reload = bool(inserts)        # a new build needs its id before it can be edited further
+        try:
+            for rid, diff, values in updates:
+                # A date fills in only at the moment its status is changed to Completed.
+                if "status" in diff and values["status"] == "Completed" and not values["completion_date"]:
+                    diff["completion_date"] = values["completion_date"] = today
+                    needs_reload = True     # show the date that was just filled in
+                if "qc_status" in diff and values["qc_status"] == "Completed" and not values[QC_DATE]:
+                    diff[QC_DATE] = values[QC_DATE] = today
+                    needs_reload = True
+                update_build(rid, diff)
+                last[rid] = values
+            for values in inserts:
+                if values["status"] == "Completed" and not values["completion_date"]:
+                    values["completion_date"] = today
+                if values["qc_status"] == "Completed" and not values[QC_DATE]:
+                    values[QC_DATE] = today
+                insert_build(values)
+            st.session_state[f"builds_saved_at_{key}"] = now_local()
+        except Exception as e:
+            st.error(f"Could not save your last change, it will retry on your next edit. ({e})")
+            needs_reload = False
+        if needs_reload:
+            if inserts:
+                st.session_state["_toast"] = f"✅ Added {len(inserts)} new build{'s' if len(inserts) != 1 else ''}"
+            reload_table()
+    saved_at = st.session_state.get(f"builds_saved_at_{key}")
+    save_bar.caption(f"✓ Saved automatically at {saved_at:%I:%M:%S %p}" if saved_at else "Changes save automatically.")
+    st.download_button(f"📥 Download Excel · {label}", data=export_builds_excel(fresh, label),
                        file_name=f"Company_Builds_{label.replace(' ', '_')}.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        key=f"builds_download_{key}")
