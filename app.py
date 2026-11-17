@@ -2658,8 +2658,7 @@ def _render_qc_reports(builds):
 
 SECTIONS = {"📊 Dashboard": "Build counts and charts, all months",
             "📅 Monthly Builds": "View, add, edit and delete builds by month",
-            "✅ Quality Check": "Checklist by team member and build",
-            "📑 SF QC Reports": "Salesforce QC files and scores for every build"}
+            "✅ Quality Check": "Checklist by team member and build"}
 MONTH_VIEWS = ("📅 Monthly Builds",)    # sections that use the sidebar Month picker
 LIVE_VIEWS = ("📊 Dashboard",)          # sections that refresh themselves every 30 seconds
 
@@ -2722,8 +2721,6 @@ def render_builds_page():
         _live(_render_overview)
     elif view == "📅 Monthly Builds":
         _render_month(builds, pick_month)
-    elif view == "📑 SF QC Reports":
-        _render_qc_reports(builds)
     else:
         _render_build_checklist(builds, checks)
 
