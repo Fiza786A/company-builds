@@ -175,7 +175,7 @@ def sqlite_conn():
     if "notes" not in cols:
         conn.execute("ALTER TABLE build_checks ADD COLUMN notes TEXT")
     bcols = [r[1] for r in conn.execute("PRAGMA table_info(builds)")]
-    for col in ("ua_status", "balance_status", "qc_completion_date"):
+    for col in ("ua_status", "balance_status", "qc_completion_date", "build_month"):
         if col not in bcols:
             conn.execute(f"ALTER TABLE builds ADD COLUMN {col} TEXT")
     conn.commit()
@@ -212,12 +212,16 @@ EXTRA_COLUMNS = {"enabled": True}   # turns off if the database doesn't have the
 # QC Completed date: filled in automatically when QC Status is set to Completed.
 QC_DATE = "qc_completion_date"
 QC_DATE_COLUMN = {"enabled": True}  # turns off if the database doesn't have this column yet
+# The month a build was added under in Monthly Builds. Keeps a build without a due date in that month
+# (a due date, once added, decides the month instead). Not shown as a column.
+BUILD_MONTH = "build_month"
+BUILD_MONTH_COLUMN = {"enabled": True}  # turns off if the database doesn't have this column yet
 # Payroll Leads who assign builds (US team). Add names here as needed.
 PAYROLL_LEADS = ["Chelsi", "Dakota", "Jessikah", "Kristin", "Lauren", "Macy", "Tiffany"]
 
 BUILD_COLS = ["id", "company_name", "company_code", "hierarchy", "status", "completion_date",
               "due_date", "built_by", "assigned_by", "qc_by", "qc_status", "ua_status", "balance_status",
-              "qc_completion_date"]
+              "qc_completion_date", "build_month"]
 CHECK_COLS = ["build_id", "item_id", "built", "qc", "na", "comments", "notes"]
 BUILD_FIELDS = {  # column shown in the tracker -> database field, in the order the tables show them
     "Company Name": "company_name", "Company Code": "company_code", "Hierarchy": "hierarchy",
@@ -585,30 +589,34 @@ def _clean_text(v):
 
 def load_builds():
     if USE_SUPABASE:
-        # If the database is missing newer columns (QC Completed, then UA/Balance), load without them:
-        # they're shown blank and not saved until the column is added.
-        attempts = [(True, True), (False, True), (False, False)]   # (QC date, UA/Balance)
-        for i, (with_qc_date, with_extras) in enumerate(attempts):
-            cols = [c for c in BUILD_COLS if (with_qc_date or c != QC_DATE)
-                    and (with_extras or c not in EXTRA_STATUS)]
-            try:
-                df = pd.DataFrame(_fetch_all("builds", ",".join(cols)), columns=cols)
-            except Exception:
-                if i == len(attempts) - 1:
-                    raise
-                continue
-            for c in BUILD_COLS:
-                if c not in df.columns:
-                    df[c] = None
-            QC_DATE_COLUMN["enabled"], EXTRA_COLUMNS["enabled"] = with_qc_date, with_extras
-            break
+        # If the database is missing newer columns (Build month, QC Completed, UA/Balance), load without
+        # them: they're shown blank and not saved until the column is added.
+        optional = [((BUILD_MONTH,), BUILD_MONTH_COLUMN), ((QC_DATE,), QC_DATE_COLUMN),
+                    (tuple(EXTRA_STATUS), EXTRA_COLUMNS)]
+        try:
+            df = pd.DataFrame(_fetch_all("builds", ",".join(BUILD_COLS)), columns=BUILD_COLS)
+            for _cols, flag in optional:
+                flag["enabled"] = True
+        except Exception:
+            sb = get_supabase()
+            for cols_, flag in optional:     # find out which of the newer columns exist
+                try:
+                    sb.table("builds").select(",".join(cols_)).limit(1).execute()
+                    flag["enabled"] = True
+                except Exception:
+                    flag["enabled"] = False
+            missing = {c for cols_, flag in optional if not flag["enabled"] for c in cols_}
+            cols = [c for c in BUILD_COLS if c not in missing]
+            df = pd.DataFrame(_fetch_all("builds", ",".join(cols)), columns=cols)
+            for c in missing:
+                df[c] = None
     else:
         conn = sqlite_conn()
         try:
             df = pd.read_sql_query(f"SELECT {', '.join(BUILD_COLS)} FROM builds", conn)
         finally:
             conn.close()
-    for col in DATE_FIELDS:
+    for col in (*DATE_FIELDS, BUILD_MONTH):
         df[col] = df[col].map(_to_date).astype(object)
     for col in ("company_name", "company_code", "hierarchy", "status", "built_by", "assigned_by", "qc_by", "qc_status"):
         df[col] = df[col].map(_clean_text).astype(object)
@@ -687,7 +695,8 @@ def _db_value(v):
 def _db_fields(fields):
     """Leave out UA/Balance and QC Completed when the database doesn't have those columns yet."""
     return {k: _db_value(v) for k, v in fields.items()
-            if (EXTRA_COLUMNS["enabled"] or k not in EXTRA_STATUS) and (QC_DATE_COLUMN["enabled"] or k != QC_DATE)}
+            if (EXTRA_COLUMNS["enabled"] or k not in EXTRA_STATUS) and (QC_DATE_COLUMN["enabled"] or k != QC_DATE)
+            and (BUILD_MONTH_COLUMN["enabled"] or k != BUILD_MONTH)}
 
 
 def insert_builds(rows):
@@ -708,7 +717,7 @@ def insert_build(row):
     if USE_SUPABASE:
         res = get_supabase().table("builds").insert(row).execute()
         return int(res.data[0]["id"])
-    cols = list(BUILD_FIELDS.values())
+    cols = [*BUILD_FIELDS.values(), BUILD_MONTH]
     conn = sqlite_conn()
     cur = conn.execute(f"INSERT INTO builds({','.join(cols)}) VALUES({','.join(':' + c for c in cols)})",
                        {c: row.get(c) for c in cols})
@@ -1019,13 +1028,21 @@ def export_all_builds_excel(builds, raines):
     return buf.getvalue()
 
 
-def _month_frame(builds, choice):
-    """Builds due in the chosen month. Builds with no due date show under the current month."""
+def _build_months(builds):
+    """The month each build belongs to: its due date's month, else the month it was added under in
+    Monthly Builds, else the current month."""
     current = month_start(today_local())
-    start, end = choice, month_end(choice)
-    in_month = builds.due_date.map(lambda d: d is not None and start <= d <= end)
-    no_due = builds.due_date.map(lambda d: d is None) & (choice == current)
-    return builds[in_month | no_due]
+    added = builds[BUILD_MONTH] if BUILD_MONTH in builds.columns else pd.Series(None, index=builds.index)
+
+    def pick(due, mo):
+        due, mo = _to_date(due), _to_date(mo)
+        return month_start(due) if due else (month_start(mo) if mo else current)
+    return pd.Series([pick(d, m) for d, m in zip(builds.due_date, added)], index=builds.index, dtype=object)
+
+
+def _month_frame(builds, choice):
+    """Builds in the chosen month (see _build_months)."""
+    return builds[_build_months(builds) == choice]
 
 
 def _filter_builds(table, key):
@@ -1093,7 +1110,7 @@ def _filter_builds(table, key):
     return table[keep].reset_index(drop=True)     # a plain 0..n index, so adding rows still works
 
 
-def _builds_editor(builds, frame, key, label):
+def _builds_editor(builds, frame, key, label, month=None):
     """Editable builds table: click a cell to edit, add a row at the bottom, or select rows and delete them.
     Edits and new rows save automatically in the background; deleting asks for confirmation first."""
     frame = frame.sort_values("id")      # in the order they were added; new builds go at the bottom
@@ -1170,9 +1187,18 @@ def _builds_editor(builds, frame, key, label):
         if is_new and not any(values.values()):
             continue
         if not values["company_name"]:
-            problems.append("Every build needs a Company Name.")
+            problems.append("Every build needs a Company Name. That row saves once it has one.")
             continue
         if is_new:
+            if month is not None:
+                values[BUILD_MONTH] = month      # keeps it in this month, even without a due date
+                # Without the build_month column in the database, a build with no due date would land in
+                # the current month and vanish from this one, so it waits for its Due Date instead.
+                if (not BUILD_MONTH_COLUMN["enabled"] and month != month_start(today_local())
+                        and not values["due_date"]):
+                    problems.append(f"Add a **Due Date** in {month:%B %Y} to the new build "
+                                    f"({values['company_name']}) to save it here.")
+                    continue
             values["status"] = values["status"] or "Pending"
             inserts.append(values)
         else:
@@ -1189,7 +1215,7 @@ def _builds_editor(builds, frame, key, label):
 
     with save_bar:
         for msg in dict.fromkeys(problems):
-            st.warning(msg + " That row saves once it has one.")
+            st.warning(msg)
 
         # Deleting: rows removed in the table are only deleted from the database after confirming.
         if removed:
@@ -1908,7 +1934,7 @@ def _render_build_checklist(builds, checks):
 def _month_options(builds):
     """Months to choose from, newest first: from the earliest due date up to next month (or a later due date)."""
     nxt = add_months(month_start(today_local()), 1)
-    due_months = [month_start(d) for d in builds.due_date if d]
+    due_months = list(_build_months(builds)) if not builds.empty else []
     first = min([month_start(today_local()), *due_months])
     last = max([nxt, *due_months])
     opts, mo = [], first
@@ -1927,11 +1953,8 @@ def _render_month(builds, pick_month):
     df["status"] = df.status.map(lambda v: _clean_text(v) or "Pending")
     df["qc_status"] = df.qc_status.map(lambda v: _clean_text(v) or "")
     df["due"] = df.due_date.map(_to_date)
-    # Same builds as the Builds table: due in this month, plus builds with no due date (shown in the current month).
-    start, end = pick_month, month_end(pick_month)
-    in_month = df.due.map(lambda d: d is not None and start <= d <= end)
-    no_due = df.due.map(lambda d: d is None) & (pick_month == current)
-    g = df[in_month | no_due]
+    # Same builds as the Builds table (due in this month, or added under it without a due date).
+    g = df[_build_months(df) == pick_month]
 
     st.subheader(f"{pick_month:%B %Y} Company Builds")
     if g.empty:
@@ -1970,7 +1993,8 @@ def _month_builds_table(pick_month):
     """The Monthly Builds table, like a checklist section: an edit reruns only this table, which saves
     it in the background without reloading (or fading) the rest of the page."""
     builds = load_builds()
-    _builds_editor(builds, _month_frame(builds, pick_month), key=f"month_{pick_month}", label=f"{pick_month:%B %Y}")
+    _builds_editor(builds, _month_frame(builds, pick_month), key=f"month_{pick_month}", label=f"{pick_month:%B %Y}",
+                   month=pick_month)
 
 
 # Raines builds: a separate project of 52 companies, all completed 14-18 May 2026.
@@ -2050,7 +2074,9 @@ def _render_overview(builds):
     df = builds.copy()
     df["status"] = df.status.map(lambda v: _clean_text(v) or "Pending")
     df["qc_status"] = df.qc_status.map(lambda v: _clean_text(v) or "")
-    df["month"] = df.due_date.map(lambda d: month_start(_to_date(d)) if _to_date(d) else None)
+    # Month for the chart: the due date's month, else the month the build was added under.
+    df["month"] = [month_start(_to_date(d)) if _to_date(d) else (month_start(_to_date(m)) if _to_date(m) else None)
+                   for d, m in zip(df.due_date, df[BUILD_MONTH])]
 
     raines = _raines_frame()
     n_raines = len(raines)
