@@ -1600,11 +1600,15 @@ def _render_build_checklist(builds, checks):
     uploaded_ids = _uploaded_ids(checks)
     shown.insert(shown.columns.get_loc("QC Status") + 1, "Checklist Uploaded",
                  shown["id"].map(lambda i: int(i) in uploaded_ids))
-    qc_latest = load_qc_reports().drop_duplicates("build_id", keep="first") if QC_REPORTS["enabled"] else None
-    if qc_latest is not None:
-        pct = {int(r.build_id): float(r.pct_pass) / 100 for r in qc_latest.itertuples() if pd.notna(r.build_id)}
-        shown.insert(shown.columns.get_loc("Checklist Uploaded") + 1, "SF QC % Pass",
-                     shown["id"].map(lambda i: pct.get(int(i))))
+    all_qc = load_qc_reports() if QC_REPORTS["enabled"] else None
+    if all_qc is not None:
+        after = "Checklist Uploaded"
+        for kind in ("sf", "netchex"):
+            latest_k = all_qc[all_qc.report_type == kind].drop_duplicates("build_id", keep="first")
+            pct = {int(r.build_id): float(r.pct_pass) / 100 for r in latest_k.itertuples() if pd.notna(r.build_id)}
+            col = f"{QC_KINDS[kind]['label']} % Pass"
+            shown.insert(shown.columns.get_loc(after) + 1, col, shown["id"].map(lambda i: pct.get(int(i))))
+            after = col
     event = st.dataframe(
         shown, key=f"chk_table_{who}", hide_index=True, width="stretch", on_select="rerun",
         selection_mode=["single-row", "single-cell"], height=min(35 * len(shown) + 40, 400),
@@ -1615,6 +1619,9 @@ def _render_build_checklist(builds, checks):
                        "SF QC % Pass": st.column_config.ProgressColumn(
                            "SF QC % Pass", format="percent", min_value=0, max_value=1,
                            help="From the latest SF QC report uploaded on the build's page below"),
+                       "Netchex QC % Pass": st.column_config.ProgressColumn(
+                           "Netchex QC % Pass", format="percent", min_value=0, max_value=1,
+                           help="From the latest Netchex QC report uploaded on the build's page below (N/A rows left out)"),
                        "Build Completed": st.column_config.DateColumn("Build Completed", format="MM/DD/YYYY"),
                        "QC Completed": st.column_config.DateColumn("QC Completed", format="MM/DD/YYYY"),
                        "Due Date": st.column_config.DateColumn("Due Date", format="MM/DD/YYYY")})
@@ -1834,8 +1841,9 @@ def _render_build_checklist(builds, checks):
         else:
             st.caption("Confirm once the completed checklist has been downloaded and uploaded to the S drive.")
 
-    # ── SF QC report (Salesforce QC workbook) for this build ──
-    _render_qc_for_build(builds, b)
+    # ── SF QC report (Salesforce QC workbook) and Netchex QC report for this build ──
+    _render_qc_for_build(builds, b, "sf")
+    _render_qc_for_build(builds, b, "netchex")
 
 
 
@@ -2433,27 +2441,39 @@ def render_landing_page():
 # with one row per upload in the qc_reports table. Run supabase_qc_reports.sql once to set it up.
 # ─────────────────────────────────────────────────────────────
 QC_BUCKET = "qc-reports"
-QC_RESULTS = ("Pass", "Fail", "Needs eyes", "No source")
+QC_RESULTS = ("Pass", "Fail", "Needs eyes", "No source", "N/A")
 QC_REPORT_COLS = ["id", "build_id", "company_code", "file_name", "file_path", "pct_pass", "pass_count",
                   "fail_count", "needs_eyes_count", "no_source_count", "total_checks", "uploaded_by", "uploaded_at"]
+QC_EXTRA_COLS = ["report_type", "na_count"]     # added by supabase_netchex_qc_reports.sql
 QC_SETUP_HINT = ("SF QC reports aren't set up yet. In Supabase open SQL Editor → New query, paste "
                  "**supabase_qc_reports.sql**, click Run, then refresh this page.")
+NX_SETUP_HINT = ("Netchex QC reports need one more setup step. In Supabase open SQL Editor → New query, paste "
+                 "**supabase_netchex_qc_reports.sql**, click Run, then refresh this page.")
+# Two kinds of QC report share the qc_reports table, told apart by report_type.
+QC_KINDS = {
+    "sf": {"label": "SF QC", "sheet": "SF QC", "file": "'<Client> (<CODE>) - SF QC.xlsx'"},
+    "netchex": {"label": "Netchex QC", "sheet": "Netchex QC", "file": "'<Client> (<CODE>) - Netchex QC.xlsx'"},
+}
 
 
-def parse_qc_workbook(data):
-    """Reads an SF QC workbook (new or old layout) and counts its results straight from the Result column,
-    so it works even when Excel hasn't saved the formula values. Returns a dict, or raises ValueError."""
+def parse_qc_workbook(data, kind="sf"):
+    """Reads an SF QC or Netchex QC workbook (new or old layout) and counts its results straight from the
+    Result column, so it works even when Excel hasn't saved the formula values. Returns a dict, or raises
+    ValueError. % Pass leaves out N/A rows (same as the % PASS tile in the Netchex QC file)."""
     from openpyxl import load_workbook
     try:
         wb = load_workbook(BytesIO(data), data_only=True, read_only=True)
     except Exception:
         raise ValueError("This isn't an Excel (.xlsx) file.")
-    ws = wb["SF QC"] if "SF QC" in wb.sheetnames else wb.worksheets[0]
+    want, other = QC_KINDS[kind]["sheet"], QC_KINDS["netchex" if kind == "sf" else "sf"]["sheet"]
+    if want not in wb.sheetnames and other in wb.sheetnames:
+        raise ValueError(f"This is the {other} workbook. Upload it in the {other} report box instead.")
+    ws = wb[want] if want in wb.sheetnames else wb.worksheets[0]
     rows = list(ws.iter_rows(values_only=True))
     title = str(rows[0][0]) if rows and rows[0] and rows[0][0] else ""
     hdr = next((i for i, r in enumerate(rows[:15]) if r and "Result" in [str(v).strip() if v else "" for v in r]), None)
     if hdr is None:
-        raise ValueError("No Result column found. Upload the SF QC workbook made by the QC.")
+        raise ValueError(f"No Result column found. Upload the {QC_KINDS[kind]['label']} workbook made by the QC.")
     col = [str(v).strip() if v else "" for v in rows[hdr]].index("Result")
     counts = {k: 0 for k in QC_RESULTS}
     for r in rows[hdr + 1:]:
@@ -2461,33 +2481,54 @@ def parse_qc_workbook(data):
         if v in counts:
             counts[v] += 1
     total = sum(counts.values())
-    if not total:
+    scored = total - counts["N/A"]
+    if not scored:
         raise ValueError("No Pass / Fail / Needs eyes results found in this file.")
     m = re.search(r"\(([A-Z0-9]{2,5})\)", title.upper())
     return {"title": title, "company_code": m.group(1) if m else None, "counts": counts, "total": total,
-            "pct_pass": round(100 * counts["Pass"] / total, 1)}
+            "pct_pass": round(100 * counts["Pass"] / scored, 1), "kind": kind}
 
 
-QC_REPORTS = {"enabled": True}
+QC_REPORTS = {"enabled": True, "netchex": True}
 
 
 def load_qc_reports():
     """All uploaded SF QC reports, newest first. Empty (and setup hint shown) if the table isn't there yet."""
+    cols = QC_REPORT_COLS + QC_EXTRA_COLS
     try:
         if USE_SUPABASE:
-            df = pd.DataFrame(_fetch_all("qc_reports", ",".join(QC_REPORT_COLS)), columns=QC_REPORT_COLS)
+            try:
+                df = pd.DataFrame(_fetch_all("qc_reports", ",".join(cols)), columns=cols)
+                QC_REPORTS["netchex"] = True
+            except Exception:
+                # Netchex QC columns not added yet: SF QC keeps working, Netchex QC shows the setup hint.
+                df = pd.DataFrame(_fetch_all("qc_reports", ",".join(QC_REPORT_COLS)), columns=QC_REPORT_COLS)
+                QC_REPORTS["netchex"] = False
         else:
             conn = sqlite_conn()
             conn.execute(f"""CREATE TABLE IF NOT EXISTS qc_reports (id INTEGER PRIMARY KEY AUTOINCREMENT,
                 build_id INTEGER, company_code TEXT, file_name TEXT, file_path TEXT, pct_pass REAL,
                 pass_count INTEGER, fail_count INTEGER, needs_eyes_count INTEGER, no_source_count INTEGER,
                 total_checks INTEGER, uploaded_by TEXT, uploaded_at TEXT)""")
-            df = pd.read_sql_query(f"SELECT {', '.join(QC_REPORT_COLS)} FROM qc_reports", conn)
+            have = {r[1] for r in conn.execute("PRAGMA table_info(qc_reports)")}
+            if "report_type" not in have:
+                conn.execute("ALTER TABLE qc_reports ADD COLUMN report_type TEXT DEFAULT 'sf'")
+            if "na_count" not in have:
+                conn.execute("ALTER TABLE qc_reports ADD COLUMN na_count INTEGER DEFAULT 0")
+            conn.commit()
+            df = pd.read_sql_query(f"SELECT {', '.join(cols)} FROM qc_reports", conn)
             conn.close()
+            QC_REPORTS["netchex"] = True
         QC_REPORTS["enabled"] = True
     except Exception:
         QC_REPORTS["enabled"] = False
-        df = pd.DataFrame(columns=QC_REPORT_COLS)
+        QC_REPORTS["netchex"] = False
+        df = pd.DataFrame(columns=cols)
+    for c in QC_EXTRA_COLS:
+        if c not in df.columns:
+            df[c] = None
+    df["report_type"] = df["report_type"].fillna("sf")
+    df["na_count"] = pd.to_numeric(df["na_count"], errors="coerce").fillna(0)
     if not df.empty:
         df["uploaded_at"] = pd.to_datetime(df["uploaded_at"], errors="coerce", utc=True).dt.tz_convert(TZ)
         df = df.sort_values("uploaded_at", ascending=False)
@@ -2501,15 +2542,18 @@ def _qc_local_dir():
 
 
 def save_qc_report(build_id, company_code, file_name, data, parsed, uploaded_by):
+    kind = parsed.get("kind", "sf")
     stamp = now_local().strftime("%Y%m%d-%H%M%S")
     safe = re.sub(r"[^A-Za-z0-9._() -]", "_", file_name)
-    path = f"{(company_code or 'NO-CODE').upper()}/{stamp}_{safe}"
+    path = f"{(company_code or 'NO-CODE').upper()}/{'netchex/' if kind == 'netchex' else ''}{stamp}_{safe}"
     c = parsed["counts"]
     row = {"build_id": int(build_id) if build_id is not None else None, "company_code": company_code,
            "file_name": file_name, "file_path": path, "pct_pass": parsed["pct_pass"],
            "pass_count": c["Pass"], "fail_count": c["Fail"], "needs_eyes_count": c["Needs eyes"],
            "no_source_count": c["No source"], "total_checks": parsed["total"], "uploaded_by": uploaded_by,
            "uploaded_at": datetime.now(TZ).isoformat()}
+    if kind == "netchex":       # SF rows leave these to the column defaults, so SF works before the Netchex setup
+        row.update({"report_type": "netchex", "na_count": c["N/A"]})
     if USE_SUPABASE:
         sb = get_supabase()
         sb.storage.from_(QC_BUCKET).upload(path, data, {
@@ -2548,24 +2592,27 @@ def delete_qc_report(report):
 
 def _qc_score_text(r):
     return (f"{r.pct_pass:.0f}% Pass · {int(r.fail_count)} Fail · {int(r.needs_eyes_count)} Needs eyes"
-            + (f" · {int(r.no_source_count)} No source" if int(r.no_source_count or 0) else ""))
+            + (f" · {int(r.no_source_count)} No source" if int(r.no_source_count or 0) else "")
+            + (f" · {int(r.na_count)} N/A" if int(getattr(r, "na_count", 0) or 0) else ""))
 
 
-def _qc_upload_box(builds, key, build=None):
+def _qc_upload_box(builds, key, build=None, kind="sf"):
     """Upload widget. With `build`, the file is attached to that build; otherwise the build is matched by the
     company code in the file's title (e.g. 'Abilene Country Club (1M7)') or picked from a list."""
-    up = st.file_uploader("Upload the SF QC workbook (.xlsx)", type=["xlsx"], key=f"{key}_file",
-                          help="The '<Client> (<CODE>) - SF QC.xlsx' file from the QC. Its score is read from the file.")
+    k = QC_KINDS[kind]
+    up = st.file_uploader(f"Upload the {k['label']} workbook (.xlsx)", type=["xlsx"], key=f"{key}_file",
+                          help=f"The {k['file']} file from the QC. Its score is read from the file.")
     if not up:
         return
     data = up.getvalue()
     try:
-        parsed = parse_qc_workbook(data)
+        parsed = parse_qc_workbook(data, kind)
     except ValueError as e:
         st.error(str(e)); return
     c = parsed["counts"]
+    tail = f"{c['N/A']} N/A" if kind == "netchex" else f"{c['No source']} No source"
     st.caption(f"Read from the file: **{parsed['pct_pass']:.1f}% Pass** · {c['Pass']} Pass · {c['Fail']} Fail · "
-               f"{c['Needs eyes']} Needs eyes · {c['No source']} No source · {parsed['total']} checks")
+               f"{c['Needs eyes']} Needs eyes · {tail} · {parsed['total']} checks")
     if build is None:
         code = parsed["company_code"]
         match = builds[builds.company_code == code] if code else builds.iloc[0:0]
@@ -2584,13 +2631,14 @@ def _qc_upload_box(builds, key, build=None):
             st.warning(f"This file is for {parsed['company_code']}, but this build's code is {code}. Check it's the right file.")
     who = st.selectbox("Uploaded by", TEAM_MEMBERS, key=f"{key}_who",
                        index=TEAM_MEMBERS.index("Fiza") if "Fiza" in TEAM_MEMBERS else 0)
-    if st.button("⬆️ Save QC report", key=f"{key}_save", type="primary", disabled=build_id is None):
+    if st.button(f"⬆️ Save {k['label']} report", key=f"{key}_save", type="primary", disabled=build_id is None):
         b = builds[builds.id == build_id].iloc[0]
         try:
             save_qc_report(build_id, _clean_text(b.company_code) or parsed["company_code"], up.name, data, parsed, who)
         except Exception as e:
-            st.error(f"The QC report could not be saved. {QC_SETUP_HINT} ({e})"); return
-        st.session_state["_toast"] = f"✅ QC report saved for {b.company_name}: {parsed['pct_pass']:.0f}% Pass"
+            hint = NX_SETUP_HINT if kind == "netchex" else QC_SETUP_HINT
+            st.error(f"The {k['label']} report could not be saved. {hint} ({e})"); return
+        st.session_state["_toast"] = f"✅ {k['label']} report saved for {b.company_name}: {parsed['pct_pass']:.0f}% Pass"
         st.session_state.pop(f"{key}_file", None)
         st.rerun()
 
@@ -2604,15 +2652,18 @@ def _qc_download(r, key):
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
-def _render_qc_for_build(builds, build):
-    """SF QC report box on a build's checklist page."""
+def _render_qc_for_build(builds, build, kind="sf"):
+    """SF QC or Netchex QC report box on a build's checklist page."""
+    label = QC_KINDS[kind]["label"]
     st.space("small")
     with st.container(border=True):
-        st.markdown("**SF QC report**")
+        st.markdown(f"**{label} report**")
         if not QC_REPORTS["enabled"]:
             st.info(QC_SETUP_HINT); return
         reports = load_qc_reports()
-        mine = reports[reports.build_id == int(build.id)]
+        if kind == "netchex" and not QC_REPORTS["netchex"]:
+            st.info(NX_SETUP_HINT); return
+        mine = reports[(reports.build_id == int(build.id)) & (reports.report_type == kind)]
         if not mine.empty:
             r = mine.iloc[0]
             c = st.columns([1, 1, 1, 1, 1.4])
@@ -2622,11 +2673,12 @@ def _render_qc_for_build(builds, build):
             c[3].metric("Checks", int(r.total_checks))
             with c[4]:
                 st.caption(f"{r.file_name}\n\nUploaded by {r.uploaded_by or '—'}")
-                _qc_download(r, f"qcdl_build_{int(r.id)}")
+                _qc_download(r, f"{kind}dl_build_{int(r.id)}")
             st.caption("Changed some Needs eyes to Pass in the file? Upload it again: the new file and score replace this one.")
         else:
-            st.caption("No SF QC report yet for this build.")
-        _qc_upload_box(builds, f"qcup_{int(build.id)}", build=build)
+            st.caption(f"No {label} report yet for this build.")
+        prefix = "nxqc" if kind == "netchex" else "qc"
+        _qc_upload_box(builds, f"{prefix}up_{int(build.id)}", build=build, kind=kind)
 
 
 def _render_qc_reports(builds):
@@ -2634,6 +2686,7 @@ def _render_qc_reports(builds):
     if not QC_REPORTS["enabled"]:
         st.info(QC_SETUP_HINT); return
     reports = load_qc_reports()
+    reports = reports[reports.report_type == "sf"]
     with st.expander("⬆️ Upload an SF QC report", expanded=reports.empty):
         _qc_upload_box(builds, "qcup_main")
     if reports.empty:
