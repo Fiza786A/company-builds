@@ -343,6 +343,7 @@ CHECKLIST = [
             ("S06-08", "Company Info"),
             ("S06-09", "Employee Search"),
             ("S06-10", "Payroll"),
+            ("N16", "Secure Act 2.0"),
         ]),
         ("Reports > File Feeds", [
             ("S06-12", "Set up The Work Number (Company Info + Client Contact + Partner Contact — Rene Roy)"),
