@@ -172,6 +172,8 @@ def sqlite_conn():
     cols = [r[1] for r in conn.execute("PRAGMA table_info(build_checks)")]
     if "comments" not in cols:
         conn.execute("ALTER TABLE build_checks ADD COLUMN comments TEXT")
+    if "notes" not in cols:
+        conn.execute("ALTER TABLE build_checks ADD COLUMN notes TEXT")
     bcols = [r[1] for r in conn.execute("PRAGMA table_info(builds)")]
     for col in ("ua_status", "balance_status", "qc_completion_date"):
         if col not in bcols:
@@ -216,7 +218,7 @@ PAYROLL_LEADS = ["Chelsi", "Dakota", "Jessikah", "Kristin", "Lauren", "Macy", "T
 BUILD_COLS = ["id", "company_name", "company_code", "hierarchy", "status", "completion_date",
               "due_date", "built_by", "assigned_by", "qc_by", "qc_status", "ua_status", "balance_status",
               "qc_completion_date"]
-CHECK_COLS = ["build_id", "item_id", "built", "qc", "na", "comments"]
+CHECK_COLS = ["build_id", "item_id", "built", "qc", "na", "comments", "notes"]
 BUILD_FIELDS = {  # column shown in the tracker -> database field, in the order the tables show them
     "Company Name": "company_name", "Company Code": "company_code", "Hierarchy": "hierarchy",
     "Status": "status", "QC Status": "qc_status",          # the two statuses side by side
@@ -586,18 +588,25 @@ def load_builds():
 
 
 CHECK_COMMENTS = {"enabled": True}   # turns off if the database has no comments column yet
+CHECK_NOTES = {"enabled": True}      # turns off if the database has no notes column yet (run supabase_add_notes.sql)
 
 
 def load_build_checks():
     if USE_SUPABASE:
-        try:
-            df = pd.DataFrame(_fetch_all("build_checks", ",".join(CHECK_COLS)), columns=CHECK_COLS)
-        except Exception:
-            # Older database without the comments column: still show the checklist, without comments.
-            cols = [c for c in CHECK_COLS if c != "comments"]
-            df = pd.DataFrame(_fetch_all("build_checks", ",".join(cols)), columns=cols)
-            df["comments"] = None
-            CHECK_COMMENTS["enabled"] = False
+        # Older databases may lack the notes (and comments) columns: still show the checklist without them.
+        for drop in ((), ("notes",), ("notes", "comments")):
+            cols = [c for c in CHECK_COLS if c not in drop]
+            try:
+                df = pd.DataFrame(_fetch_all("build_checks", ",".join(cols)), columns=cols)
+            except Exception:
+                if len(drop) == 2:
+                    raise
+                continue
+            for c in drop:
+                df[c] = None
+            CHECK_NOTES["enabled"] = "notes" not in drop
+            CHECK_COMMENTS["enabled"] = "comments" not in drop
+            break
     else:
         conn = sqlite_conn()
         try:
@@ -607,6 +616,7 @@ def load_build_checks():
     for col in ("built", "qc", "na"):
         df[col] = df[col].fillna(False).astype(bool)
     df["comments"] = df["comments"].map(_clean_text).astype(object)
+    df["notes"] = df["notes"].map(_clean_text).astype(object)
     return df
 
 
@@ -685,13 +695,22 @@ def save_build_checks(rows):
     if USE_SUPABASE:
         if not CHECK_COMMENTS["enabled"]:
             rows = [{k: v for k, v in r.items() if k != "comments"} for r in rows]
+        if not CHECK_NOTES["enabled"]:
+            rows = [{k: v for k, v in r.items() if k != "notes"} for r in rows]
         get_supabase().table("build_checks").upsert(rows, on_conflict="build_id,item_id").execute()
         return
     conn = sqlite_conn()
-    conn.executemany("""INSERT INTO build_checks(build_id,item_id,built,qc,na,comments)
-        VALUES(:build_id,:item_id,:built,:qc,:na,:comments)
-        ON CONFLICT(build_id,item_id) DO UPDATE SET built=excluded.built, qc=excluded.qc, na=excluded.na,
-        comments=excluded.comments""", rows)
+    if any("notes" in r for r in rows):
+        rows = [{"notes": None, **r} for r in rows]
+        conn.executemany("""INSERT INTO build_checks(build_id,item_id,built,qc,na,comments,notes)
+            VALUES(:build_id,:item_id,:built,:qc,:na,:comments,:notes)
+            ON CONFLICT(build_id,item_id) DO UPDATE SET built=excluded.built, qc=excluded.qc, na=excluded.na,
+            comments=excluded.comments, notes=excluded.notes""", rows)
+    else:
+        conn.executemany("""INSERT INTO build_checks(build_id,item_id,built,qc,na,comments)
+            VALUES(:build_id,:item_id,:built,:qc,:na,:comments)
+            ON CONFLICT(build_id,item_id) DO UPDATE SET built=excluded.built, qc=excluded.qc, na=excluded.na,
+            comments=excluded.comments""", rows)
     conn.commit(); conn.close()
 
 
@@ -858,7 +877,7 @@ def export_checklist_excel(b, saved):
             ws.cell(row=ws.max_row, column=col).font = bold
     ws.append([])
 
-    headers = ["Area", "Item", "Key", "Built", "QC", "N/A", "Comments"]
+    headers = ["Area", "Item", "Key", "N/A", "Built", "Notes", "QC", "Errors"]
     ws.append(headers)
     head_row = ws.max_row
     for c in ws[head_row]:
@@ -878,38 +897,38 @@ def export_checklist_excel(b, saved):
         sq = sum(1 for it in app_items if saved.get(it["id"]) is not None and saved[it["id"]].qc)
         ws.append([f"{section}  —  Built {sb}/{len(app_items)} · QC {sq}/{len(app_items)}"])
         r = ws.max_row
-        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=7)
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
         ws.cell(row=r, column=1).font = bold
-        for col in range(1, 8):
+        for col in range(1, 9):
             ws.cell(row=r, column=col).fill = section_fill
             ws.cell(row=r, column=col).border = box
         if note:
             ws.append([note])
             r = ws.max_row
-            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=7)
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
             ws.cell(row=r, column=1).font = Font(italic=True, size=9, color="595959")
             ws.cell(row=r, column=1).alignment = wrap
             ws.row_dimensions[r].height = 15 * max(1, len(note) // 140 + 1)
         for it in items:
             s = saved.get(it["id"])
             built, qc, na = (bool(s.built), bool(s.qc), bool(s.na)) if s is not None else (False, False, False)
-            ws.append([it["sub"], it["item"], "★" if it["key"] else "",
-                       "✓" if built else "", "✓" if qc else "", "N/A" if na else "",
-                       txt(s.comments) if s is not None else ""])
+            ws.append([it["sub"], it["item"], "★" if it["key"] else "", "N/A" if na else "",
+                       "✓" if built else "", txt(getattr(s, "notes", None)) if s is not None else "",
+                       "✓" if qc else "", txt(s.comments) if s is not None else ""])
             r = ws.max_row
-            for col in range(1, 8):
+            for col in range(1, 9):
                 cell = ws.cell(row=r, column=col)
                 cell.border = box
-                cell.alignment = center if col in (3, 4, 5, 6) else wrap
+                cell.alignment = center if col in (3, 4, 5, 7) else wrap
             if na:
-                for col in range(1, 8):
+                for col in range(1, 9):
                     ws.cell(row=r, column=col).fill = na_fill
             else:
-                for col, ok in ((4, built), (5, qc)):
+                for col, ok in ((5, built), (7, qc)):
                     if ok:
                         ws.cell(row=r, column=col).fill = done_fill
 
-    for col, width in zip("ABCDEFG", (30, 70, 6, 8, 8, 7, 40)):
+    for col, width in zip("ABCDEFGH", (30, 70, 6, 7, 8, 40, 8, 40)):
         ws.column_dimensions[col].width = width
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
@@ -1613,12 +1632,12 @@ def _render_build_checklist(builds, checks):
     download_link = _excel_link(export_checklist_excel(b, saved), f"QC_Checklist_{code}_{safe}.xlsx",
                                 "Download checklist",
                                 "This build's checklist as an Excel file: details, every item with its Built / QC / "
-                                "N/A ticks and comments. Ready to print or save to the client folder.", align="left", big=True)
+                                "N/A ticks, errors and notes. Ready to print or save to the client folder.", align="left", big=True)
     status, qc_status = txt(b.status) or "Pending", txt(b.qc_status) or "Pending"
 
     st.markdown(f"**Status:** {STATUS_LABEL.get(status, status)} &nbsp;·&nbsp; "
                 f"**QC status:** {STATUS_LABEL.get(qc_status, qc_status)}")
-    st.caption("Ticks, N/A, comments and the names below save automatically. A section's counts "
+    st.caption("Ticks, N/A, errors, notes and the names below save automatically. A section's counts "
                "update when you close it.")
     # The name/status boxes get fresh keys after each save so they show the saved values.
     ver = st.session_state.get(f"chk_ver_{build_id}", 0)
@@ -1642,14 +1661,14 @@ def _render_build_checklist(builds, checks):
         if snap_key not in st.session_state:
             st.session_state[snap_key] = rows
         df = pd.DataFrame(st.session_state[snap_key])
-        df["Note"] = df.Comments.map(lambda c: "🔴" if c else "")    # red dot on rows that have a saved comment
-        n_notes = int((df.Comments != "").sum())
+        df["Note"] = (df.Comments != "").map(lambda c: "🔴" if c else "")    # red dot only on rows with an error
+        n_notes = int((df.Comments != "").sum())                    # badge counts items with an error logged
         sec_app = int((~df["N/A"]).sum())
         sec_built = int((df.Built & ~df["N/A"]).sum())
         sec_qc = int((df.QC & ~df["N/A"]).sum())
         done = "✅ " if sec_app and sec_built == sec_app and sec_qc == sec_app else ""
         # Shown as a red badge, pushed to the far right of the section bar by CHECKLIST_CSS.
-        notes = f" :red-badge[🔴 {n_notes} comment{'s' if n_notes != 1 else ''}]" if n_notes else ""
+        notes = f" :red-badge[🔴 {n_notes} error{'s' if n_notes != 1 else ''}]" if n_notes else ""
         # Remember which sections are open, so a section stays open when its counts refresh.
         open_key = f"chk_open_{build_id}_{si}"
         was_open = st.session_state.get(open_key, False)
@@ -1685,16 +1704,20 @@ def _render_build_checklist(builds, checks):
             ed = st.data_editor(
                 view, key=f"chk_{build_id}_{si}_{sv}", hide_index=True, width="stretch",
                 num_rows="fixed", disabled=["Area", "Item", "Note"],
+                column_order=["Area", "Item", "N/A", "Built", "Notes", "QC", "Comments", "Note"],
                 column_config={"item_id": None,
                                "Area": st.column_config.TextColumn("Area", width=200),
                                "Item": st.column_config.TextColumn("Item", width=520),
                                "Built": st.column_config.CheckboxColumn("Built", width=60),
                                "QC": st.column_config.CheckboxColumn("QC", width=60),
-                               "Comments": st.column_config.TextColumn("Comments ✏️", width=260,
-                                                                       help="Click to add a note for this item"),
+                               "Comments": st.column_config.TextColumn("Errors ✏️", width=260,
+                                                                       help="Click to log an error found on this item"),
+                               "Notes": st.column_config.TextColumn("Notes ✏️", width=260,
+                                                                    help="Click to add a note for this item",
+                                                                    disabled=not CHECK_NOTES["enabled"]),
                                "N/A": st.column_config.CheckboxColumn("N/A", width=55),
                                "Note": st.column_config.TextColumn("💬", width=45,
-                                                                   help="🔴 = this item has a comment")})
+                                                                   help="🔴 = this item has an error")})
             ed = ed.copy()
             refresh_after = False
             for field, want in want_all.items():
@@ -1704,17 +1727,19 @@ def _render_build_checklist(builds, checks):
             # Compare with what this section last saved, and save only what's new.
             last_key = f"chk_last_{build_id}_{si}_{sv}"
             last = st.session_state.setdefault(last_key, {
-                r["item_id"]: (r["Built"], r["QC"], r["N/A"], r["Comments"]) for r in st.session_state[snap_key]})
+                r["item_id"]: (r["Built"], r["QC"], r["N/A"], r["Comments"], r["Notes"])
+                for r in st.session_state[snap_key]})
             sec_changes = {}
             for i in range(len(ed)):
                 new = (bool(ed.at[i, "Built"]), bool(ed.at[i, "QC"]), bool(ed.at[i, "N/A"]),
-                       txt(ed.at[i, "Comments"]))
+                       txt(ed.at[i, "Comments"]), txt(ed.at[i, "Notes"]))
                 if new != last[ed.at[i, "item_id"]]:
                     sec_changes[ed.at[i, "item_id"]] = new
             if sec_changes:
                 try:
                     save_build_checks([{"build_id": int(build_id), "item_id": k, "built": v[0], "qc": v[1],
-                                        "na": v[2], "comments": v[3] or None} for k, v in sec_changes.items()])
+                                        "na": v[2], "comments": v[3] or None, "notes": v[4] or None}
+                                       for k, v in sec_changes.items()])
                     last.update(sec_changes)
                     st.session_state[f"chk_saved_at_{build_id}_{si}"] = now_local()
                 except Exception as e:
@@ -1732,7 +1757,8 @@ def _render_build_checklist(builds, checks):
             s = saved.get(it["id"])
             rows.append({"item_id": it["id"], "Area": it["sub"], "Item": ("★ " if it["key"] else "") + it["item"],
                          "Built": bool(s.built) if s else False, "QC": bool(s.qc) if s else False,
-                         "N/A": bool(s.na) if s else False, "Comments": (txt(s.comments) if s else "")})
+                         "N/A": bool(s.na) if s else False, "Comments": (txt(s.comments) if s else ""),
+                         "Notes": (txt(getattr(s, "notes", None)) if s else "")})
         _section(si, section, note, rows)
 
     # ── Who built it and who QC'd it, editable here ──
