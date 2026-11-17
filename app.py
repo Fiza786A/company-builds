@@ -1580,6 +1580,11 @@ def _render_build_checklist(builds, checks):
     uploaded_ids = _uploaded_ids(checks)
     shown.insert(shown.columns.get_loc("QC Status") + 1, "Checklist Uploaded",
                  shown["id"].map(lambda i: int(i) in uploaded_ids))
+    qc_latest = load_qc_reports().drop_duplicates("build_id", keep="first") if QC_REPORTS["enabled"] else None
+    if qc_latest is not None:
+        pct = {int(r.build_id): float(r.pct_pass) / 100 for r in qc_latest.itertuples() if pd.notna(r.build_id)}
+        shown.insert(shown.columns.get_loc("Checklist Uploaded") + 1, "SF QC % Pass",
+                     shown["id"].map(lambda i: pct.get(int(i))))
     event = st.dataframe(
         shown, key=f"chk_table_{who}", hide_index=True, width="stretch", on_select="rerun",
         selection_mode=["single-row", "single-cell"], height=min(35 * len(shown) + 40, 400),
@@ -1587,6 +1592,9 @@ def _render_build_checklist(builds, checks):
                        "Company Name": st.column_config.TextColumn("Company Name", pinned=True),
                        "Checklist Uploaded": st.column_config.CheckboxColumn(
                            "Checklist Uploaded", help="Ticked on the build's checklist below once it's uploaded"),
+                       "SF QC % Pass": st.column_config.ProgressColumn(
+                           "SF QC % Pass", format="percent", min_value=0, max_value=1,
+                           help="From the latest SF QC report uploaded on the build's page below"),
                        "Build Completed": st.column_config.DateColumn("Build Completed", format="MM/DD/YYYY"),
                        "QC Completed": st.column_config.DateColumn("QC Completed", format="MM/DD/YYYY"),
                        "Due Date": st.column_config.DateColumn("Due Date", format="MM/DD/YYYY")})
@@ -2582,7 +2590,7 @@ def _render_qc_for_build(builds, build):
             c[2].metric("Needs eyes", int(r.needs_eyes_count))
             c[3].metric("Checks", int(r.total_checks))
             with c[4]:
-                st.caption(f"{r.file_name}\n\nUploaded {r.uploaded_at:%m/%d/%Y %I:%M %p} by {r.uploaded_by or '—'}")
+                st.caption(f"{r.file_name}\n\nUploaded by {r.uploaded_by or '—'}")
                 _qc_download(r, f"qcdl_build_{int(r.id)}")
             if len(mine) > 1:
                 with st.expander(f"Earlier versions ({len(mine) - 1})"):
@@ -2610,25 +2618,27 @@ def _render_qc_reports(builds):
     names = builds.set_index("id")
     latest["Company Name"] = latest.build_id.map(lambda i: names.company_name.get(int(i), "") if pd.notna(i) else "")
     latest["QC By"] = latest.build_id.map(lambda i: names.qc_by.get(int(i), "") if pd.notna(i) else "")
+    latest["Built By"] = latest.build_id.map(lambda i: names.built_by.get(int(i), "") if pd.notna(i) else "")
+    latest["Code"] = [(_clean_text(names.company_code.get(int(i))) if pd.notna(i) and int(i) in names.index else None)
+                      or _clean_text(c) for i, c in zip(latest.build_id, latest.company_code)]
     c = st.columns(4)
     c[0].metric("Builds with a QC report", len(latest))
     c[1].metric("Average % Pass", f"{latest.pct_pass.mean():.0f}%")
     c[2].metric("Builds with Fails", int((latest.fail_count > 0).sum()))
     c[3].metric("Builds with Needs eyes", int((latest.needs_eyes_count > 0).sum()))
     table = pd.DataFrame({
-        "Company Name": latest["Company Name"], "Company Code": latest.company_code,
+        "Company Name": latest["Company Name"], "Company Code": latest["Code"],
         "% Pass": latest.pct_pass / 100, "Pass": latest.pass_count, "Fail": latest.fail_count,
         "Needs eyes": latest.needs_eyes_count, "No source": latest.no_source_count,
-        "Checks": latest.total_checks, "QC By": latest["QC By"], "Uploaded by": latest.uploaded_by,
-        "Uploaded": latest.uploaded_at.dt.tz_localize(None), "Versions": latest.build_id.map(reports.build_id.value_counts()),
+        "Checks": latest.total_checks, "Built By": latest["Built By"], "QC By": latest["QC By"],
+        "Uploaded by": latest.uploaded_by, "Versions": latest.build_id.map(reports.build_id.value_counts()),
     }).reset_index(drop=True)
     st.markdown("**Latest QC per build** · click a row to download its file")
     event = st.dataframe(
         table, key="qc_reports_table", hide_index=True, width="stretch", on_select="rerun",
         selection_mode="single-row", height=min(35 * len(table) + 40, 520),
         column_config={"Company Name": st.column_config.TextColumn(pinned=True),
-                       "% Pass": st.column_config.ProgressColumn("% Pass", format="percent", min_value=0, max_value=1),
-                       "Uploaded": st.column_config.DatetimeColumn("Uploaded", format="MM/DD/YYYY hh:mm a")})
+                       "% Pass": st.column_config.ProgressColumn("% Pass", format="percent", min_value=0, max_value=1)})
     if event.selection.rows:
         r = latest.iloc[event.selection.rows[0]]
         with st.container(border=True):
