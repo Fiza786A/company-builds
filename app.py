@@ -1795,6 +1795,9 @@ def _render_build_checklist(builds, checks):
         else:
             st.caption("Confirm once the completed checklist has been downloaded and uploaded to the S drive.")
 
+    # ── SF QC report (Salesforce QC workbook) for this build ──
+    _render_qc_for_build(builds, b)
+
 
 
 
@@ -2386,9 +2389,267 @@ def render_landing_page():
 """, height=570)
 
 
+# ─────────────────────────────────────────────────────────────
+# SF QC reports: the Excel QC file for a build, stored in Supabase Storage (bucket "qc-reports")
+# with one row per upload in the qc_reports table. Run supabase_qc_reports.sql once to set it up.
+# ─────────────────────────────────────────────────────────────
+QC_BUCKET = "qc-reports"
+QC_RESULTS = ("Pass", "Fail", "Needs eyes", "No source")
+QC_REPORT_COLS = ["id", "build_id", "company_code", "file_name", "file_path", "pct_pass", "pass_count",
+                  "fail_count", "needs_eyes_count", "no_source_count", "total_checks", "uploaded_by", "uploaded_at"]
+QC_SETUP_HINT = ("SF QC reports aren't set up yet. In Supabase open SQL Editor → New query, paste "
+                 "**supabase_qc_reports.sql**, click Run, then refresh this page.")
+
+
+def parse_qc_workbook(data):
+    """Reads an SF QC workbook (new or old layout) and counts its results straight from the Result column,
+    so it works even when Excel hasn't saved the formula values. Returns a dict, or raises ValueError."""
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(BytesIO(data), data_only=True, read_only=True)
+    except Exception:
+        raise ValueError("This isn't an Excel (.xlsx) file.")
+    ws = wb["SF QC"] if "SF QC" in wb.sheetnames else wb.worksheets[0]
+    rows = list(ws.iter_rows(values_only=True))
+    title = str(rows[0][0]) if rows and rows[0] and rows[0][0] else ""
+    hdr = next((i for i, r in enumerate(rows[:15]) if r and "Result" in [str(v).strip() if v else "" for v in r]), None)
+    if hdr is None:
+        raise ValueError("No Result column found. Upload the SF QC workbook made by the QC.")
+    col = [str(v).strip() if v else "" for v in rows[hdr]].index("Result")
+    counts = {k: 0 for k in QC_RESULTS}
+    for r in rows[hdr + 1:]:
+        v = str(r[col]).strip() if r and len(r) > col and r[col] else ""
+        if v in counts:
+            counts[v] += 1
+    total = sum(counts.values())
+    if not total:
+        raise ValueError("No Pass / Fail / Needs eyes results found in this file.")
+    m = re.search(r"\(([A-Z0-9]{2,5})\)", title.upper())
+    return {"title": title, "company_code": m.group(1) if m else None, "counts": counts, "total": total,
+            "pct_pass": round(100 * counts["Pass"] / total, 1)}
+
+
+QC_REPORTS = {"enabled": True}
+
+
+def load_qc_reports():
+    """All uploaded SF QC reports, newest first. Empty (and setup hint shown) if the table isn't there yet."""
+    try:
+        if USE_SUPABASE:
+            df = pd.DataFrame(_fetch_all("qc_reports", ",".join(QC_REPORT_COLS)), columns=QC_REPORT_COLS)
+        else:
+            conn = sqlite_conn()
+            conn.execute(f"""CREATE TABLE IF NOT EXISTS qc_reports (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                build_id INTEGER, company_code TEXT, file_name TEXT, file_path TEXT, pct_pass REAL,
+                pass_count INTEGER, fail_count INTEGER, needs_eyes_count INTEGER, no_source_count INTEGER,
+                total_checks INTEGER, uploaded_by TEXT, uploaded_at TEXT)""")
+            df = pd.read_sql_query(f"SELECT {', '.join(QC_REPORT_COLS)} FROM qc_reports", conn)
+            conn.close()
+        QC_REPORTS["enabled"] = True
+    except Exception:
+        QC_REPORTS["enabled"] = False
+        df = pd.DataFrame(columns=QC_REPORT_COLS)
+    if not df.empty:
+        df["uploaded_at"] = pd.to_datetime(df["uploaded_at"], errors="coerce", utc=True).dt.tz_convert(TZ)
+        df = df.sort_values("uploaded_at", ascending=False)
+    return df
+
+
+def _qc_local_dir():
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qc_reports")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def save_qc_report(build_id, company_code, file_name, data, parsed, uploaded_by):
+    stamp = now_local().strftime("%Y%m%d-%H%M%S")
+    safe = re.sub(r"[^A-Za-z0-9._() -]", "_", file_name)
+    path = f"{(company_code or 'NO-CODE').upper()}/{stamp}_{safe}"
+    c = parsed["counts"]
+    row = {"build_id": int(build_id) if build_id is not None else None, "company_code": company_code,
+           "file_name": file_name, "file_path": path, "pct_pass": parsed["pct_pass"],
+           "pass_count": c["Pass"], "fail_count": c["Fail"], "needs_eyes_count": c["Needs eyes"],
+           "no_source_count": c["No source"], "total_checks": parsed["total"], "uploaded_by": uploaded_by,
+           "uploaded_at": datetime.now(TZ).isoformat()}
+    if USE_SUPABASE:
+        sb = get_supabase()
+        sb.storage.from_(QC_BUCKET).upload(path, data, {
+            "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "upsert": "true"})
+        sb.table("qc_reports").insert(row).execute()
+        return
+    with open(os.path.join(_qc_local_dir(), path.replace("/", "__")), "wb") as f:
+        f.write(data)
+    conn = sqlite_conn()
+    conn.execute(f"INSERT INTO qc_reports({','.join(row)}) VALUES({','.join(':' + k for k in row)})", row)
+    conn.commit(); conn.close()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def download_qc_report(path):
+    if USE_SUPABASE:
+        return get_supabase().storage.from_(QC_BUCKET).download(path)
+    with open(os.path.join(_qc_local_dir(), path.replace("/", "__")), "rb") as f:
+        return f.read()
+
+
+def delete_qc_report(report):
+    if USE_SUPABASE:
+        sb = get_supabase()
+        sb.storage.from_(QC_BUCKET).remove([report.file_path])
+        sb.table("qc_reports").delete().eq("id", int(report.id)).execute()
+        return
+    try:
+        os.remove(os.path.join(_qc_local_dir(), report.file_path.replace("/", "__")))
+    except OSError:
+        pass
+    conn = sqlite_conn()
+    conn.execute("DELETE FROM qc_reports WHERE id=?", (int(report.id),))
+    conn.commit(); conn.close()
+
+
+def _qc_score_text(r):
+    return (f"{r.pct_pass:.0f}% Pass · {int(r.fail_count)} Fail · {int(r.needs_eyes_count)} Needs eyes"
+            + (f" · {int(r.no_source_count)} No source" if int(r.no_source_count or 0) else ""))
+
+
+def _qc_upload_box(builds, key, build=None):
+    """Upload widget. With `build`, the file is attached to that build; otherwise the build is matched by the
+    company code in the file's title (e.g. 'Abilene Country Club (1M7)') or picked from a list."""
+    up = st.file_uploader("Upload the SF QC workbook (.xlsx)", type=["xlsx"], key=f"{key}_file",
+                          help="The '<Client> (<CODE>) - SF QC.xlsx' file from the QC. Its score is read from the file.")
+    if not up:
+        return
+    data = up.getvalue()
+    try:
+        parsed = parse_qc_workbook(data)
+    except ValueError as e:
+        st.error(str(e)); return
+    c = parsed["counts"]
+    st.caption(f"Read from the file: **{parsed['pct_pass']:.1f}% Pass** · {c['Pass']} Pass · {c['Fail']} Fail · "
+               f"{c['Needs eyes']} Needs eyes · {c['No source']} No source · {parsed['total']} checks")
+    if build is None:
+        code = parsed["company_code"]
+        match = builds[builds.company_code == code] if code else builds.iloc[0:0]
+        options = {int(r.id): f"{r.company_name} ({r.company_code or 'no code'})"
+                   for r in builds.sort_values("company_name").itertuples()}
+        default = int(match.iloc[0].id) if not match.empty else None
+        build_id = st.selectbox("Build", list(options), format_func=options.get, key=f"{key}_build",
+                                index=list(options).index(default) if default in options else None,
+                                placeholder="Pick the build this QC is for")
+        if code and match.empty:
+            st.warning(f"No build has company code {code} yet. Pick the build, or add the code to it in Monthly Builds.")
+    else:
+        build_id = int(build.id)
+        code = _clean_text(build.company_code)
+        if parsed["company_code"] and code and parsed["company_code"] != code.upper():
+            st.warning(f"This file is for {parsed['company_code']}, but this build's code is {code}. Check it's the right file.")
+    who = st.selectbox("Uploaded by", TEAM_MEMBERS, key=f"{key}_who",
+                       index=TEAM_MEMBERS.index("Fiza") if "Fiza" in TEAM_MEMBERS else 0)
+    if st.button("⬆️ Save QC report", key=f"{key}_save", type="primary", disabled=build_id is None):
+        b = builds[builds.id == build_id].iloc[0]
+        try:
+            save_qc_report(build_id, _clean_text(b.company_code) or parsed["company_code"], up.name, data, parsed, who)
+        except Exception as e:
+            st.error(f"The QC report could not be saved. {QC_SETUP_HINT} ({e})"); return
+        st.session_state["_toast"] = f"✅ QC report saved for {b.company_name}: {parsed['pct_pass']:.0f}% Pass"
+        st.session_state.pop(f"{key}_file", None)
+        st.rerun()
+
+
+def _qc_download(r, key):
+    try:
+        data = download_qc_report(r.file_path)
+    except Exception as e:
+        st.caption(f"Download unavailable ({e})"); return
+    st.download_button("⬇️ Download", data=data, file_name=r.file_name, key=key,
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+def _render_qc_for_build(builds, build):
+    """SF QC report box on a build's checklist page."""
+    st.space("small")
+    with st.container(border=True):
+        st.markdown("**SF QC report**")
+        if not QC_REPORTS["enabled"]:
+            st.info(QC_SETUP_HINT); return
+        reports = load_qc_reports()
+        mine = reports[reports.build_id == int(build.id)]
+        if not mine.empty:
+            r = mine.iloc[0]
+            c = st.columns([1, 1, 1, 1, 1.4])
+            c[0].metric("% Pass", f"{r.pct_pass:.0f}%")
+            c[1].metric("Fail", int(r.fail_count))
+            c[2].metric("Needs eyes", int(r.needs_eyes_count))
+            c[3].metric("Checks", int(r.total_checks))
+            with c[4]:
+                st.caption(f"{r.file_name}\n\nUploaded {r.uploaded_at:%m/%d/%Y %I:%M %p} by {r.uploaded_by or '—'}")
+                _qc_download(r, f"qcdl_build_{int(r.id)}")
+            if len(mine) > 1:
+                with st.expander(f"Earlier versions ({len(mine) - 1})"):
+                    for o in mine.iloc[1:].itertuples():
+                        a, b2 = st.columns([3, 1])
+                        a.caption(f"{o.uploaded_at:%m/%d/%Y %I:%M %p} · {_qc_score_text(o)} · {o.file_name}")
+                        with b2:
+                            _qc_download(o, f"qcdl_old_{int(o.id)}")
+            st.caption("Changed some Needs eyes to Pass in the file? Upload it again: the score updates and the old version is kept.")
+        else:
+            st.caption("No SF QC report yet for this build.")
+        _qc_upload_box(builds, f"qcup_{int(build.id)}", build=build)
+
+
+def _render_qc_reports(builds):
+    """📑 SF QC Reports section: every build's latest QC score and file, plus upload."""
+    if not QC_REPORTS["enabled"]:
+        st.info(QC_SETUP_HINT); return
+    reports = load_qc_reports()
+    with st.expander("⬆️ Upload an SF QC report", expanded=reports.empty):
+        _qc_upload_box(builds, "qcup_main")
+    if reports.empty:
+        st.info("No SF QC reports uploaded yet."); return
+    latest = reports.drop_duplicates("build_id", keep="first").copy()
+    names = builds.set_index("id")
+    latest["Company Name"] = latest.build_id.map(lambda i: names.company_name.get(int(i), "") if pd.notna(i) else "")
+    latest["QC By"] = latest.build_id.map(lambda i: names.qc_by.get(int(i), "") if pd.notna(i) else "")
+    c = st.columns(4)
+    c[0].metric("Builds with a QC report", len(latest))
+    c[1].metric("Average % Pass", f"{latest.pct_pass.mean():.0f}%")
+    c[2].metric("Builds with Fails", int((latest.fail_count > 0).sum()))
+    c[3].metric("Builds with Needs eyes", int((latest.needs_eyes_count > 0).sum()))
+    table = pd.DataFrame({
+        "Company Name": latest["Company Name"], "Company Code": latest.company_code,
+        "% Pass": latest.pct_pass / 100, "Pass": latest.pass_count, "Fail": latest.fail_count,
+        "Needs eyes": latest.needs_eyes_count, "No source": latest.no_source_count,
+        "Checks": latest.total_checks, "QC By": latest["QC By"], "Uploaded by": latest.uploaded_by,
+        "Uploaded": latest.uploaded_at.dt.tz_localize(None), "Versions": latest.build_id.map(reports.build_id.value_counts()),
+    }).reset_index(drop=True)
+    st.markdown("**Latest QC per build** · click a row to download its file")
+    event = st.dataframe(
+        table, key="qc_reports_table", hide_index=True, width="stretch", on_select="rerun",
+        selection_mode="single-row", height=min(35 * len(table) + 40, 520),
+        column_config={"Company Name": st.column_config.TextColumn(pinned=True),
+                       "% Pass": st.column_config.ProgressColumn("% Pass", format="percent", min_value=0, max_value=1),
+                       "Uploaded": st.column_config.DatetimeColumn("Uploaded", format="MM/DD/YYYY hh:mm a")})
+    if event.selection.rows:
+        r = latest.iloc[event.selection.rows[0]]
+        with st.container(border=True):
+            st.markdown(f"**{r['Company Name'] or r.company_code}** — {_qc_score_text(r)}")
+            a, b2, _ = st.columns([1, 1, 3])
+            with a:
+                _qc_download(r, f"qcdl_main_{int(r.id)}")
+            with b2:
+                if st.button("🗑️ Delete this version", key=f"qcdel_{int(r.id)}"):
+                    try:
+                        delete_qc_report(r)
+                        st.session_state["_toast"] = "🗑️ QC report deleted"
+                    except Exception as e:
+                        st.session_state["_flash_error"] = f"Could not delete the report. ({e})"
+                    st.rerun()
+
+
 SECTIONS = {"📊 Dashboard": "Build counts and charts, all months",
             "📅 Monthly Builds": "View, add, edit and delete builds by month",
-            "✅ Quality Check": "Checklist by team member and build"}
+            "✅ Quality Check": "Checklist by team member and build",
+            "📑 SF QC Reports": "Salesforce QC files and scores for every build"}
 MONTH_VIEWS = ("📅 Monthly Builds",)    # sections that use the sidebar Month picker
 LIVE_VIEWS = ("📊 Dashboard",)          # sections that refresh themselves every 30 seconds
 
@@ -2397,6 +2658,7 @@ def render_builds_page():
     try:
         builds = load_builds()
         checks = load_build_checks()
+        load_qc_reports()          # only to know whether the SF QC reports table exists yet
     except Exception as e:
         st.error("Company Builds could not load its data. Check that the builds and build_checks "
                  "tables exist in Supabase.")
@@ -2450,6 +2712,8 @@ def render_builds_page():
         _live(_render_overview)
     elif view == "📅 Monthly Builds":
         _render_month(builds, pick_month)
+    elif view == "📑 SF QC Reports":
+        _render_qc_reports(builds)
     else:
         _render_build_checklist(builds, checks)
 
