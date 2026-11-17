@@ -466,7 +466,6 @@ CHECKLIST = [
      "Payroll Group hours: Weekly = 40 · Bi-Weekly = 80 · Semi-Monthly = 86.6667 · Monthly = 173.3334", [
         ("Maint > More > Company Structure", [
             ("S10-01", "Set up Div/Business Unit/Department Structure"),
-            ("S10-02", "Hide Main Department (000 — never delete)"),
             ("S10-03", "Set up Locations (all physical work locations)"),
         ]),
         ("Maint > HR", [
@@ -509,6 +508,10 @@ CHECKLIST = [
             ("S12-09", "Enter Check Header (Fields 1, 2, 3)"),
             ("S12-10", "Check Box Details 1, 3, 6, 7 (Dept Info, Accrual Info, Saved Signature, Employer Ded. Amounts)"),
             ("S12-11", "Premium Pay only: add \"(C/O Netchex Payroll)\" to the second line of the Check Header"),
+        ]),
+        ("Maint > Company Information", [
+            ("N17", "Upload Client Signature (JPEG via Company Image Upload Utility; confirm in Check Signatures "
+                    "report; not for Premium Pay)"),
         ]),
         ("Back Office > More > RR", [("S12-12", "Verify the company is set up in Report Runner (now automatic for new companies; "
                                                "if missing, copy from CIW/OHE/parent)")]),
@@ -1466,7 +1469,6 @@ SECTION_HOWTO = {
 - Expand All. Add Division > + Business Unit > + Department (codes have character limits).
 - No structure given: 100 – [Company] / 100 – [Company] / 100 – Staff.
 - Large structure: Import with the spec file (Add, div, BU, dept, cost center if asked); CSV without headers.
-- Hide (never delete) the 000 department. No employees may be in it.
 
 **Locations** · Maintenance > Company Structure > General > Locations
 - Main Location 000 carries the main address. Add every other physical work location.
@@ -1530,6 +1532,14 @@ SECTION_HOWTO = {
 - Field 1 name · Field 2 address or DBA · Field 3 city, state, ZIP.
 - Check Display Dept Info, Accrual Info, Saved Signature, Employer Deduction Amounts > Submit.
 - Premium Pay: line 2 "C/O Netchex Payroll" and no signature upload.
+
+**Upload signature** · Maintenance > Company Information > wand icon
+- *Capture:* open the signature agreement attached to the case. Pick the clearest of the client's three signatures (single or double boxes) and screenshot it without the box lines.
+- Double signature with a line through it? In the screenshot, use the pen tool in white to draw over the line and any other marks.
+- Save As > Implementation > Scanned Signatures (so everyone has access), file type JPEG, named with the company code.
+- *Upload:* go to the company in Netchex > Maintenance > Company Information, type the company code and click the wand icon on its row. The Company Image Upload Utility opens.
+- Check the company drop-down is the right company (it defaults to the code you're in). Choose File > your JPEG > Upload.
+- *Confirm:* Back Office > Reports > Check Signatures. Search by company name (not code) and generate; the signature shows next to the company's bank accounts.
 
 **Report Runner** · Back Office > Report Runner > Create/Edit
 - New companies now appear to be set by default. If yours is in the copy list, copy from CIW/OHE/parent (Edge; never edit the settings page).
