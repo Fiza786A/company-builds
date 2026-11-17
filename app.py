@@ -2618,14 +2618,7 @@ def _render_qc_for_build(builds, build):
             with c[4]:
                 st.caption(f"{r.file_name}\n\nUploaded by {r.uploaded_by or '—'}")
                 _qc_download(r, f"qcdl_build_{int(r.id)}")
-            if len(mine) > 1:
-                with st.expander(f"Earlier versions ({len(mine) - 1})"):
-                    for o in mine.iloc[1:].itertuples():
-                        a, b2 = st.columns([3, 1])
-                        a.caption(f"{o.uploaded_at:%m/%d/%Y %I:%M %p} · {_qc_score_text(o)} · {o.file_name}")
-                        with b2:
-                            _qc_download(o, f"qcdl_old_{int(o.id)}")
-            st.caption("Changed some Needs eyes to Pass in the file? Upload it again: the score updates and the old version is kept.")
+            st.caption("Changed some Needs eyes to Pass in the file? Upload it again: the new file and score replace this one.")
         else:
             st.caption("No SF QC report yet for this build.")
         _qc_upload_box(builds, f"qcup_{int(build.id)}", build=build)
