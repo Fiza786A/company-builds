@@ -1672,8 +1672,10 @@ def _render_build_checklist(builds, checks):
         # Remember which sections are open, so a section stays open when its counts refresh.
         open_key = f"chk_open_{build_id}_{si}"
         was_open = st.session_state.get(open_key, False)
+        # A fixed key keeps it the same section bar when its counts or badge change, so one click opens or
+        # closes it (without a key, a changed label made it a new bar and the first click was lost).
         exp = st.expander(f"{done}{section}  —  Built {sec_built}/{sec_app} · QC {sec_qc}/{sec_app}{notes}",
-                          expanded=was_open, on_change="rerun")
+                          key=f"chk_exp_{build_id}_{si}", on_change="rerun")
         st.session_state[open_key] = bool(exp.open)
         if was_open and not exp.open:
             _refresh_section(si)             # just closed: reload it with the saved ticks and counts
@@ -1745,7 +1747,9 @@ def _render_build_checklist(builds, checks):
                 except Exception as e:
                     st.error(f"Could not save your last change, it will retry on your next click. ({e})")
             if refresh_after:
-                _refresh_section(si)
+                # Tick all: reload just this section (it stays open) so the table shows the new ticks
+                st.session_state[f"chk_ver_{build_id}_{si}"] = sv + 1
+                st.rerun(scope="fragment")
             saved_at = st.session_state.get(f"chk_saved_at_{build_id}_{si}")
             st.caption(f"✓ Saved automatically at {saved_at:%I:%M:%S %p}" if saved_at
                        else "Changes save automatically.")
