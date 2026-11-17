@@ -343,7 +343,6 @@ CHECKLIST = [
             ("S06-08", "Company Info"),
             ("S06-09", "Employee Search"),
             ("S06-10", "Payroll"),
-            ("N16", "Secure Act 2.0"),
         ]),
         ("Reports > File Feeds", [
             ("S06-12", "Set up The Work Number (Company Info + Client Contact + Partner Contact — Rene Roy)"),
@@ -409,14 +408,53 @@ CHECKLIST = [
             ("S08-21", "Engagement Advanced (if on proposal)"),
         ]),
     ]),
-    ("Netchex - Feature Flags", "", [
-        ("Maint > Security > New Feature Access", [
-            ("S09-01", "Add feature flags according to the company claims enabled in Company Info page "
-                       "(products listed on PEPM proposal)"),
-            ("S09-02", "Activate Employee Engagement Basic (Community Basic) for ALL clients"),
-            ("S09-03", "Verify Earned Wage Access feature flag is on (always-on flag for every client)"),
+    ("Netchex - Feature Flags",
+     "Maintenance > Security > New Feature Access. Follows the live Feature Flags Index (11/16/2026); "
+     "if the two differ, the Index wins.", [
+        ("All clients", [
+            ("S09-06", "★ New Payroll Engine — NOT auto-on for new clients. If missing: uncheck Multi-Company "
+                       "Payroll, check New Payroll Engine, then re-check Multi-Company Payroll"),
+            ("S09-07", "★ Multi-Company Payroll (3012) + Payroll Dashboard — turn on together (MCP alone shows "
+                       "mock data; ~15 min to apply, no payroll in progress)"),
+            ("S09-08", "Payroll Review and Submit (3000) + Review and Submit UI Refresh (3033) — needs New Payroll "
+                       "Engine; claims Employee Check Preview + Payroll Comparison"),
+            ("S09-09", "EditTimesheets (3035), Payroll Status (3036), VoidRecreateCheck (3034), "
+                       "Start Payroll Redesign (3037), Automated 401k Catch-up (3040)"),
+            ("S09-10", "★ Locals Tax, Payroll Process Timesheet Service, Invoice PDF Attachment"),
+            ("S09-11", "Verify the defaults are on: Payroll Schedules, Suggested Taxes, Secure Act 2.0, Recognition "
+                       "Settings, Minimum Hours Worked, Accrual Expiration, Badge Punch Decoupled, Who's In "
+                       "Dashboard, Time Off Policies, Automatic Holidays, Payday Notification, Direct Deposit "
+                       "Authorization, New Scheduler"),
+            ("S09-02", "Engagement Phase One, with the Engagement Basic + Engagement Core claims "
+                       "(claim names still being confirmed)"),
+            ("S09-03", "Verify Earned Wage Access is on (not yet confirmed for every client; for legacy Rain "
+                       "clients check before changing it)"),
             ("S09-04", "Earned Wage Access: Product Suite > Earned Wage Access, activate the slider for the company"),
+            ("S09-12", "Punch Request — clients with Time & Attendance"),
+            ("S09-13", "Employee Profile (user level) — verify every employee has it after the import"),
+        ]),
+        ("If on the PEPM proposal", [
+            ("S09-01", "Add the flags for every product on the PEPM proposal (claims in Company Info page)"),
+            ("S09-14", "Scheduler: Scheduler claim + New Scheduler + Who's In Dashboard; user access case for admins"),
+            ("S09-15", "AskHR: AskHR flag + Community Basic and Community Core claims + security 5320; "
+                       "docs uploaded, then Tanya Jain enables AI"),
+            ("S09-16", "Netchex AI: Netchex AI flag + NetchexAI claim, then Zoom Tanya Jain with the company code"),
+            ("S09-17", "Insights: Insights flag + security groups 5090 and 5110"),
+            ("S09-18", "NetLearn: LMS + NetLearn - Manage Users (after BizLibrary setup)"),
+            ("S09-19", "Recruit: Recruit - HigherMe claim + HigherMe Recruiting UI Access (user level) — "
+                       "admin permissions first, flag last"),
+            ("S09-20", "Communications flag (Announcements / Conversations) + Workplace Communication claim"),
+            ("S09-21", "Benefits clients: Benefits Enablement Experience"),
+            ("S09-22", "ExpensePath (employee level) + ExpensePath API integration"),
+            ("S09-23", "Onboarding & Workflows clients: Effective Dating - Company Structure, "
+                       "WorkflowsLicenseAndCertificationTasks"),
             ("S09-05", "Activate QBO (ONLY for QBO Integration clients)"),
+        ]),
+        ("Leave off unless requested", [
+            ("S09-24", "By client request only: Effective Dating - Rates (now off by default), CA Break Waived "
+                       "(4029), Arrears deductions, Shift Preview Notes, Position attributes"),
+            ("S09-25", "Never for clients: [DemoOnly] Conversation Dashboard, Employee list MUI grid. "
+                       "Fillable Forms Bulk Download only for existing NetGuide clients"),
         ]),
     ]),
     ("Netchex - Department Structure & Payroll Maintenance",
@@ -1366,17 +1404,35 @@ SECTION_HOWTO = {
 - ⚠️ *Not confirmed yet: which claims the builder sets vs the HR Onboarding Lead.*
 """,
     "Netchex - Feature Flags": """
-**Always-on flags** · Maintenance > Security > New Feature Access > [company]
-- Confirm these are On: New Payroll Engine, Multi-Company Payroll, Payroll Schedules, Suggested Taxes, SecureAct 2.0, Year End Rollover, Engagement Phase One, Recognition Settings, Earned Wage Access, Direct Deposit Authorization, Punch Request (T&A).
-- Most are now on by default or Blocked. Turn on any that are off: toggle > Pending Changes > Confirm Changes.
-- ⚠️ *Not confirmed yet: the always-on list may change. Check the Feature Flags Index.*
+*Source: the live Feature Flags Index (link at the top right), updated 11/16/2026. If anything here differs, the Index wins.*
 
-**Product flags per proposal** · New Feature Access
-- Scheduler: New Scheduler + Who's In Dashboard.
-- Fillable Forms: Fillable Forms Bulk Download · Insights: Insights · NetLearn: LMS + NetLearn Manage Users.
-- AskHR: AskHR + AskHR Engagement Dashboard.
-- Workflows: Effective Dating Rates, Effective Dating Company Structure, Employee Acknowledgement.
-- First few builds: review with your lead. Demo companies: everything except Demo Only items.
+**All clients** · Maintenance > Security > New Feature Access > [company]
+- **New Payroll Engine** is NOT auto-on for new clients. If it's missing: uncheck Multi-Company Payroll, check New Payroll Engine, then re-check Multi-Company Payroll. Review & Submit won't show without it.
+- **Multi-Company Payroll (3012)** with **Payroll Dashboard**: MCP alone shows mock data. Takes ~15 min; make sure no payroll is in progress and the client reviews the payroll schedules.
+- **Payroll Review and Submit (3000)** + **Review and Submit UI Refresh (3033)**, keep both for now. Claims: Employee Check Preview, Payroll Comparison. If it blocks a payroll, turn it off first.
+- New for all clients: **EditTimesheets (3035)**, **Payroll Status (3036)**, **VoidRecreateCheck (3034)**, **Start Payroll Redesign (3037)**, **Automated 401k Catch-up (3040)**.
+- **Locals Tax** (confirmed for all new companies), **Payroll Process Timesheet Service** (needed for FlexPay), **Invoice PDF Attachment**.
+- Already on by default, just verify: Payroll Schedules, Suggested Taxes, Secure Act 2.0, Recognition Settings - Organization, Minimum Hours Worked, Accrual Expiration, Badge Punch Decoupled, Who's In Dashboard, Time Off Policies, Automatic Holidays, Payday Notification, Direct Deposit Authorization, New Scheduler.
+- **Engagement Phase One** with claims Engagement Basic + Engagement Core. ⚠️ *Claim names not confirmed yet (SOP says Community Basic + Community Core).*
+- **Earned Wage Access**: on by default. ⚠️ *Not confirmed for every client yet; check legacy Rain clients before changing it.* FlexPay claim only if on the PEPM and not on the SF opt-out list.
+- **Punch Request** for Time & Attendance clients · **Employee Profile** (user level): verify every employee has it after the import.
+- Turn a flag on: toggle > Pending Changes > Confirm Changes.
+
+**If on the PEPM proposal**
+- Scheduler: Scheduler claim (System Tables > company) + New Scheduler + Who's In Dashboard; open a user access case for admin NetScheduler access.
+- AskHR: AskHR flag + Community Basic, then Community Core claims + security 5320. Upload docs, client confirms access, then email/Zoom Tanya Jain to enable AI (1–3 days). ⚠️ *AskHR - Engagement Dashboard: not confirmed yet.*
+- Netchex AI: Netchex AI flag + NetchexAI claim, then Zoom Tanya Jain with the company code.
+- Insights: Insights flag + security groups 5090 and 5110.
+- NetLearn: LMS + NetLearn - Manage Users, after the BizLibrary setup (3–7 days).
+- Recruit: assign Org Admin + Configure Recruit first, Recruit - HigherMe claim, then HigherMe - Recruiting UI Access **last**.
+- Communications flag (Announcements, Conversations) + Workplace Communication claim for Conversations.
+- Benefits Enablement Experience for new Benefits clients · ExpensePath (employee level) + API integration.
+- Onboarding & Workflows is included with Core for every new client; flags are no longer needed to turn it on. With O&W: Effective Dating - Company Structure, WorkflowsLicenseAndCertificationTasks. ⚠️ *WorkflowsOnboardingDashboard / NewHireDashboard (2028): not confirmed yet.*
+
+**Leave off unless the client asks**
+- **Effective Dating - Rates is now OFF by default** (problems for multi-rate and in-implementation clients). On only by request.
+- By request: CA Break Waived (4029, CA employees), Arrears deductions, Shift Preview Notes, Position attributes.
+- Never for clients: [DemoOnly] Conversation Dashboard, Employee list MUI grid. Fillable Forms Bulk Download is for existing NetGuide clients only (new builds use the O&W form builder).
 """,
     "Netchex - Department Structure": """
 **Div / Business Unit / Department** · Maintenance > Company Structure > Div/Bus/Dept > Add/Edit/Delete
@@ -1600,15 +1656,11 @@ def _render_build_checklist(builds, checks):
     uploaded_ids = _uploaded_ids(checks)
     shown.insert(shown.columns.get_loc("QC Status") + 1, "Checklist Uploaded",
                  shown["id"].map(lambda i: int(i) in uploaded_ids))
-    all_qc = load_qc_reports() if QC_REPORTS["enabled"] else None
-    if all_qc is not None:
-        after = "Checklist Uploaded"
-        for kind in ("sf", "netchex"):
-            latest_k = all_qc[all_qc.report_type == kind].drop_duplicates("build_id", keep="first")
-            pct = {int(r.build_id): float(r.pct_pass) / 100 for r in latest_k.itertuples() if pd.notna(r.build_id)}
-            col = f"{QC_KINDS[kind]['label']} % Pass"
-            shown.insert(shown.columns.get_loc(after) + 1, col, shown["id"].map(lambda i: pct.get(int(i))))
-            after = col
+    qc_latest = load_qc_reports().drop_duplicates("build_id", keep="first") if QC_REPORTS["enabled"] else None
+    if qc_latest is not None:
+        pct = {int(r.build_id): float(r.pct_pass) / 100 for r in qc_latest.itertuples() if pd.notna(r.build_id)}
+        shown.insert(shown.columns.get_loc("Checklist Uploaded") + 1, "SF QC % Pass",
+                     shown["id"].map(lambda i: pct.get(int(i))))
     event = st.dataframe(
         shown, key=f"chk_table_{who}", hide_index=True, width="stretch", on_select="rerun",
         selection_mode=["single-row", "single-cell"], height=min(35 * len(shown) + 40, 400),
@@ -1619,9 +1671,6 @@ def _render_build_checklist(builds, checks):
                        "SF QC % Pass": st.column_config.ProgressColumn(
                            "SF QC % Pass", format="percent", min_value=0, max_value=1,
                            help="From the latest SF QC report uploaded on the build's page below"),
-                       "Netchex QC % Pass": st.column_config.ProgressColumn(
-                           "Netchex QC % Pass", format="percent", min_value=0, max_value=1,
-                           help="From the latest Netchex QC report uploaded on the build's page below (N/A rows left out)"),
                        "Build Completed": st.column_config.DateColumn("Build Completed", format="MM/DD/YYYY"),
                        "QC Completed": st.column_config.DateColumn("QC Completed", format="MM/DD/YYYY"),
                        "Due Date": st.column_config.DateColumn("Due Date", format="MM/DD/YYYY")})
@@ -1841,9 +1890,8 @@ def _render_build_checklist(builds, checks):
         else:
             st.caption("Confirm once the completed checklist has been downloaded and uploaded to the S drive.")
 
-    # ── SF QC report (Salesforce QC workbook) and Netchex QC report for this build ──
-    _render_qc_for_build(builds, b, "sf")
-    _render_qc_for_build(builds, b, "netchex")
+    # ── SF QC report (Salesforce QC workbook) for this build ──
+    _render_qc_for_build(builds, b)
 
 
 
@@ -2441,39 +2489,27 @@ def render_landing_page():
 # with one row per upload in the qc_reports table. Run supabase_qc_reports.sql once to set it up.
 # ─────────────────────────────────────────────────────────────
 QC_BUCKET = "qc-reports"
-QC_RESULTS = ("Pass", "Fail", "Needs eyes", "No source", "N/A")
+QC_RESULTS = ("Pass", "Fail", "Needs eyes", "No source")
 QC_REPORT_COLS = ["id", "build_id", "company_code", "file_name", "file_path", "pct_pass", "pass_count",
                   "fail_count", "needs_eyes_count", "no_source_count", "total_checks", "uploaded_by", "uploaded_at"]
-QC_EXTRA_COLS = ["report_type", "na_count"]     # added by supabase_netchex_qc_reports.sql
 QC_SETUP_HINT = ("SF QC reports aren't set up yet. In Supabase open SQL Editor → New query, paste "
                  "**supabase_qc_reports.sql**, click Run, then refresh this page.")
-NX_SETUP_HINT = ("Netchex QC reports need one more setup step. In Supabase open SQL Editor → New query, paste "
-                 "**supabase_netchex_qc_reports.sql**, click Run, then refresh this page.")
-# Two kinds of QC report share the qc_reports table, told apart by report_type.
-QC_KINDS = {
-    "sf": {"label": "SF QC", "sheet": "SF QC", "file": "'<Client> (<CODE>) - SF QC.xlsx'"},
-    "netchex": {"label": "Netchex QC", "sheet": "Netchex QC", "file": "'<Client> (<CODE>) - Netchex QC.xlsx'"},
-}
 
 
-def parse_qc_workbook(data, kind="sf"):
-    """Reads an SF QC or Netchex QC workbook (new or old layout) and counts its results straight from the
-    Result column, so it works even when Excel hasn't saved the formula values. Returns a dict, or raises
-    ValueError. % Pass leaves out N/A rows (same as the % PASS tile in the Netchex QC file)."""
+def parse_qc_workbook(data):
+    """Reads an SF QC workbook (new or old layout) and counts its results straight from the Result column,
+    so it works even when Excel hasn't saved the formula values. Returns a dict, or raises ValueError."""
     from openpyxl import load_workbook
     try:
         wb = load_workbook(BytesIO(data), data_only=True, read_only=True)
     except Exception:
         raise ValueError("This isn't an Excel (.xlsx) file.")
-    want, other = QC_KINDS[kind]["sheet"], QC_KINDS["netchex" if kind == "sf" else "sf"]["sheet"]
-    if want not in wb.sheetnames and other in wb.sheetnames:
-        raise ValueError(f"This is the {other} workbook. Upload it in the {other} report box instead.")
-    ws = wb[want] if want in wb.sheetnames else wb.worksheets[0]
+    ws = wb["SF QC"] if "SF QC" in wb.sheetnames else wb.worksheets[0]
     rows = list(ws.iter_rows(values_only=True))
     title = str(rows[0][0]) if rows and rows[0] and rows[0][0] else ""
     hdr = next((i for i, r in enumerate(rows[:15]) if r and "Result" in [str(v).strip() if v else "" for v in r]), None)
     if hdr is None:
-        raise ValueError(f"No Result column found. Upload the {QC_KINDS[kind]['label']} workbook made by the QC.")
+        raise ValueError("No Result column found. Upload the SF QC workbook made by the QC.")
     col = [str(v).strip() if v else "" for v in rows[hdr]].index("Result")
     counts = {k: 0 for k in QC_RESULTS}
     for r in rows[hdr + 1:]:
@@ -2481,54 +2517,33 @@ def parse_qc_workbook(data, kind="sf"):
         if v in counts:
             counts[v] += 1
     total = sum(counts.values())
-    scored = total - counts["N/A"]
-    if not scored:
+    if not total:
         raise ValueError("No Pass / Fail / Needs eyes results found in this file.")
     m = re.search(r"\(([A-Z0-9]{2,5})\)", title.upper())
     return {"title": title, "company_code": m.group(1) if m else None, "counts": counts, "total": total,
-            "pct_pass": round(100 * counts["Pass"] / scored, 1), "kind": kind}
+            "pct_pass": round(100 * counts["Pass"] / total, 1)}
 
 
-QC_REPORTS = {"enabled": True, "netchex": True}
+QC_REPORTS = {"enabled": True}
 
 
 def load_qc_reports():
     """All uploaded SF QC reports, newest first. Empty (and setup hint shown) if the table isn't there yet."""
-    cols = QC_REPORT_COLS + QC_EXTRA_COLS
     try:
         if USE_SUPABASE:
-            try:
-                df = pd.DataFrame(_fetch_all("qc_reports", ",".join(cols)), columns=cols)
-                QC_REPORTS["netchex"] = True
-            except Exception:
-                # Netchex QC columns not added yet: SF QC keeps working, Netchex QC shows the setup hint.
-                df = pd.DataFrame(_fetch_all("qc_reports", ",".join(QC_REPORT_COLS)), columns=QC_REPORT_COLS)
-                QC_REPORTS["netchex"] = False
+            df = pd.DataFrame(_fetch_all("qc_reports", ",".join(QC_REPORT_COLS)), columns=QC_REPORT_COLS)
         else:
             conn = sqlite_conn()
             conn.execute(f"""CREATE TABLE IF NOT EXISTS qc_reports (id INTEGER PRIMARY KEY AUTOINCREMENT,
                 build_id INTEGER, company_code TEXT, file_name TEXT, file_path TEXT, pct_pass REAL,
                 pass_count INTEGER, fail_count INTEGER, needs_eyes_count INTEGER, no_source_count INTEGER,
                 total_checks INTEGER, uploaded_by TEXT, uploaded_at TEXT)""")
-            have = {r[1] for r in conn.execute("PRAGMA table_info(qc_reports)")}
-            if "report_type" not in have:
-                conn.execute("ALTER TABLE qc_reports ADD COLUMN report_type TEXT DEFAULT 'sf'")
-            if "na_count" not in have:
-                conn.execute("ALTER TABLE qc_reports ADD COLUMN na_count INTEGER DEFAULT 0")
-            conn.commit()
-            df = pd.read_sql_query(f"SELECT {', '.join(cols)} FROM qc_reports", conn)
+            df = pd.read_sql_query(f"SELECT {', '.join(QC_REPORT_COLS)} FROM qc_reports", conn)
             conn.close()
-            QC_REPORTS["netchex"] = True
         QC_REPORTS["enabled"] = True
     except Exception:
         QC_REPORTS["enabled"] = False
-        QC_REPORTS["netchex"] = False
-        df = pd.DataFrame(columns=cols)
-    for c in QC_EXTRA_COLS:
-        if c not in df.columns:
-            df[c] = None
-    df["report_type"] = df["report_type"].fillna("sf")
-    df["na_count"] = pd.to_numeric(df["na_count"], errors="coerce").fillna(0)
+        df = pd.DataFrame(columns=QC_REPORT_COLS)
     if not df.empty:
         df["uploaded_at"] = pd.to_datetime(df["uploaded_at"], errors="coerce", utc=True).dt.tz_convert(TZ)
         df = df.sort_values("uploaded_at", ascending=False)
@@ -2542,18 +2557,15 @@ def _qc_local_dir():
 
 
 def save_qc_report(build_id, company_code, file_name, data, parsed, uploaded_by):
-    kind = parsed.get("kind", "sf")
     stamp = now_local().strftime("%Y%m%d-%H%M%S")
     safe = re.sub(r"[^A-Za-z0-9._() -]", "_", file_name)
-    path = f"{(company_code or 'NO-CODE').upper()}/{'netchex/' if kind == 'netchex' else ''}{stamp}_{safe}"
+    path = f"{(company_code or 'NO-CODE').upper()}/{stamp}_{safe}"
     c = parsed["counts"]
     row = {"build_id": int(build_id) if build_id is not None else None, "company_code": company_code,
            "file_name": file_name, "file_path": path, "pct_pass": parsed["pct_pass"],
            "pass_count": c["Pass"], "fail_count": c["Fail"], "needs_eyes_count": c["Needs eyes"],
            "no_source_count": c["No source"], "total_checks": parsed["total"], "uploaded_by": uploaded_by,
            "uploaded_at": datetime.now(TZ).isoformat()}
-    if kind == "netchex":       # SF rows leave these to the column defaults, so SF works before the Netchex setup
-        row.update({"report_type": "netchex", "na_count": c["N/A"]})
     if USE_SUPABASE:
         sb = get_supabase()
         sb.storage.from_(QC_BUCKET).upload(path, data, {
@@ -2592,27 +2604,24 @@ def delete_qc_report(report):
 
 def _qc_score_text(r):
     return (f"{r.pct_pass:.0f}% Pass · {int(r.fail_count)} Fail · {int(r.needs_eyes_count)} Needs eyes"
-            + (f" · {int(r.no_source_count)} No source" if int(r.no_source_count or 0) else "")
-            + (f" · {int(r.na_count)} N/A" if int(getattr(r, "na_count", 0) or 0) else ""))
+            + (f" · {int(r.no_source_count)} No source" if int(r.no_source_count or 0) else ""))
 
 
-def _qc_upload_box(builds, key, build=None, kind="sf"):
+def _qc_upload_box(builds, key, build=None):
     """Upload widget. With `build`, the file is attached to that build; otherwise the build is matched by the
     company code in the file's title (e.g. 'Abilene Country Club (1M7)') or picked from a list."""
-    k = QC_KINDS[kind]
-    up = st.file_uploader(f"Upload the {k['label']} workbook (.xlsx)", type=["xlsx"], key=f"{key}_file",
-                          help=f"The {k['file']} file from the QC. Its score is read from the file.")
+    up = st.file_uploader("Upload the SF QC workbook (.xlsx)", type=["xlsx"], key=f"{key}_file",
+                          help="The '<Client> (<CODE>) - SF QC.xlsx' file from the QC. Its score is read from the file.")
     if not up:
         return
     data = up.getvalue()
     try:
-        parsed = parse_qc_workbook(data, kind)
+        parsed = parse_qc_workbook(data)
     except ValueError as e:
         st.error(str(e)); return
     c = parsed["counts"]
-    tail = f"{c['N/A']} N/A" if kind == "netchex" else f"{c['No source']} No source"
     st.caption(f"Read from the file: **{parsed['pct_pass']:.1f}% Pass** · {c['Pass']} Pass · {c['Fail']} Fail · "
-               f"{c['Needs eyes']} Needs eyes · {tail} · {parsed['total']} checks")
+               f"{c['Needs eyes']} Needs eyes · {c['No source']} No source · {parsed['total']} checks")
     if build is None:
         code = parsed["company_code"]
         match = builds[builds.company_code == code] if code else builds.iloc[0:0]
@@ -2631,14 +2640,13 @@ def _qc_upload_box(builds, key, build=None, kind="sf"):
             st.warning(f"This file is for {parsed['company_code']}, but this build's code is {code}. Check it's the right file.")
     who = st.selectbox("Uploaded by", TEAM_MEMBERS, key=f"{key}_who",
                        index=TEAM_MEMBERS.index("Fiza") if "Fiza" in TEAM_MEMBERS else 0)
-    if st.button(f"⬆️ Save {k['label']} report", key=f"{key}_save", type="primary", disabled=build_id is None):
+    if st.button("⬆️ Save QC report", key=f"{key}_save", type="primary", disabled=build_id is None):
         b = builds[builds.id == build_id].iloc[0]
         try:
             save_qc_report(build_id, _clean_text(b.company_code) or parsed["company_code"], up.name, data, parsed, who)
         except Exception as e:
-            hint = NX_SETUP_HINT if kind == "netchex" else QC_SETUP_HINT
-            st.error(f"The {k['label']} report could not be saved. {hint} ({e})"); return
-        st.session_state["_toast"] = f"✅ {k['label']} report saved for {b.company_name}: {parsed['pct_pass']:.0f}% Pass"
+            st.error(f"The QC report could not be saved. {QC_SETUP_HINT} ({e})"); return
+        st.session_state["_toast"] = f"✅ QC report saved for {b.company_name}: {parsed['pct_pass']:.0f}% Pass"
         st.session_state.pop(f"{key}_file", None)
         st.rerun()
 
@@ -2652,18 +2660,15 @@ def _qc_download(r, key):
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
-def _render_qc_for_build(builds, build, kind="sf"):
-    """SF QC or Netchex QC report box on a build's checklist page."""
-    label = QC_KINDS[kind]["label"]
+def _render_qc_for_build(builds, build):
+    """SF QC report box on a build's checklist page."""
     st.space("small")
     with st.container(border=True):
-        st.markdown(f"**{label} report**")
+        st.markdown("**SF QC report**")
         if not QC_REPORTS["enabled"]:
             st.info(QC_SETUP_HINT); return
         reports = load_qc_reports()
-        if kind == "netchex" and not QC_REPORTS["netchex"]:
-            st.info(NX_SETUP_HINT); return
-        mine = reports[(reports.build_id == int(build.id)) & (reports.report_type == kind)]
+        mine = reports[reports.build_id == int(build.id)]
         if not mine.empty:
             r = mine.iloc[0]
             c = st.columns([1, 1, 1, 1, 1.4])
@@ -2673,12 +2678,11 @@ def _render_qc_for_build(builds, build, kind="sf"):
             c[3].metric("Checks", int(r.total_checks))
             with c[4]:
                 st.caption(f"{r.file_name}\n\nUploaded by {r.uploaded_by or '—'}")
-                _qc_download(r, f"{kind}dl_build_{int(r.id)}")
+                _qc_download(r, f"qcdl_build_{int(r.id)}")
             st.caption("Changed some Needs eyes to Pass in the file? Upload it again: the new file and score replace this one.")
         else:
-            st.caption(f"No {label} report yet for this build.")
-        prefix = "nxqc" if kind == "netchex" else "qc"
-        _qc_upload_box(builds, f"{prefix}up_{int(build.id)}", build=build, kind=kind)
+            st.caption("No SF QC report yet for this build.")
+        _qc_upload_box(builds, f"qcup_{int(build.id)}", build=build)
 
 
 def _render_qc_reports(builds):
@@ -2686,7 +2690,6 @@ def _render_qc_reports(builds):
     if not QC_REPORTS["enabled"]:
         st.info(QC_SETUP_HINT); return
     reports = load_qc_reports()
-    reports = reports[reports.report_type == "sf"]
     with st.expander("⬆️ Upload an SF QC report", expanded=reports.empty):
         _qc_upload_box(builds, "qcup_main")
     if reports.empty:
