@@ -2704,7 +2704,9 @@ def _qc_upload_box(builds, key, build=None, kind="sf"):
     """Upload widget. With `build`, the file is attached to that build; otherwise the build is matched by the
     company code in the file's title (e.g. 'Abilene Country Club (1M7)') or picked from a list."""
     k = QC_KINDS[kind]
-    up = st.file_uploader(f"Upload the {k['label']} workbook (.xlsx)", type=["xlsx"], key=f"{key}_file",
+    # The upload box gets a fresh key after each save, so it empties once the report is saved.
+    n = st.session_state.get(f"{key}_n", 0)
+    up = st.file_uploader(f"Upload the {k['label']} workbook (.xlsx)", type=["xlsx"], key=f"{key}_file_{n}",
                           help=f"The {k['file']} file from the QC. Its score is read from the file.")
     if not up:
         return
@@ -2743,7 +2745,7 @@ def _qc_upload_box(builds, key, build=None, kind="sf"):
             hint = NX_SETUP_HINT if kind == "netchex" else QC_SETUP_HINT
             st.error(f"The {k['label']} report could not be saved. {hint} ({e})"); return
         st.session_state["_toast"] = f"✅ {k['label']} report saved for {b.company_name}: {parsed['pct_pass']:.0f}% Pass"
-        st.session_state.pop(f"{key}_file", None)
+        st.session_state[f"{key}_n"] = n + 1      # empty the upload box
         st.rerun()
 
 
