@@ -217,7 +217,7 @@ QC_DATE_COLUMN = {"enabled": True}  # turns off if the database doesn't have thi
 BUILD_MONTH = "build_month"
 BUILD_MONTH_COLUMN = {"enabled": True}  # turns off if the database doesn't have this column yet
 # Payroll Leads who assign builds (US team). Add names here as needed.
-PAYROLL_LEADS = ["Chelsi", "Dakota", "Jessikah", "Kristin", "Lauren", "Macy", "Tiffany"]
+PAYROLL_LEADS = ["Chelsi", "Dakota", "Erin", "Jessikah", "Kristin", "Lauren", "Macy", "Tiffany"]
 
 BUILD_COLS = ["id", "company_name", "company_code", "hierarchy", "status", "completion_date",
               "due_date", "built_by", "assigned_by", "qc_by", "qc_status", "ua_status", "balance_status",
