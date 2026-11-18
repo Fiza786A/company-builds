@@ -1666,8 +1666,8 @@ def _render_build_checklist(builds, checks):
     order = builds.sort_values("id")     # in the order they were added
     if who != ALL:
         built_mask = order.built_by.map(lambda v: who in _people(v))
-        qc_mask = order.qc_by.map(lambda v: who in _people(v))
-        order = order[built_mask | qc_mask]
+        # Only the builds they built (Built By). Builds they QC are opened from the builder's page.
+        order = order[built_mask]
         st.markdown(f"#### {who}")
         qc_complete = order.reindex(built_mask.index).qc_status == "Completed"
         c = st.columns(3)
@@ -1685,46 +1685,57 @@ def _render_build_checklist(builds, checks):
     # Streamlit tables can't be clickable and editable at once, so editing is behind a switch.
     pick_key = f"chk_pick_{who}"
     # Read-only here: builds are edited in 📅 Monthly Builds.
-    st.markdown(f"**{who}'s builds ({len(order)})** · click a row to open its checklist")
-    table = _builds_table(order).reset_index(drop=True)
-    shown = table.copy()
-    for col in ("Status", "QC Status", "UA Status", "Balance Status"):
-        shown[col] = shown[col].map(lambda s: STATUS_LABEL.get(s, s) if s else "")
+    own = order
     uploaded_ids = _uploaded_ids(checks)
-    shown.insert(shown.columns.get_loc("QC Status") + 1, "Checklist Uploaded",
-                 shown["id"].map(lambda i: int(i) in uploaded_ids))
     all_qc = load_qc_reports() if QC_REPORTS["enabled"] else None
-    if all_qc is not None:
-        after = "Checklist Uploaded"
-        for kind in ("sf", "netchex"):
-            latest_k = all_qc[all_qc.report_type == kind].drop_duplicates("build_id", keep="first")
-            pct = {int(r.build_id): float(r.pct_pass) / 100 for r in latest_k.itertuples() if pd.notna(r.build_id)}
-            col = f"{QC_KINDS[kind]['label']} % Pass"
-            shown.insert(shown.columns.get_loc(after) + 1, col, shown["id"].map(lambda i: pct.get(int(i))))
-            after = col
-    event = st.dataframe(
-        shown, key=f"chk_table_{who}", hide_index=True, width="stretch", on_select="rerun",
-        selection_mode=["single-row", "single-cell"], height=min(35 * len(shown) + 40, 400),
-        column_config={"id": None,
-                       "Company Name": st.column_config.TextColumn("Company Name", pinned=True),
-                       "Checklist Uploaded": st.column_config.CheckboxColumn(
-                           "Checklist Uploaded", help="Ticked on the build's checklist below once it's uploaded"),
-                       "SF QC % Pass": st.column_config.ProgressColumn(
-                           "SF QC % Pass", format="percent", min_value=0, max_value=1,
-                           help="From the latest SF QC report uploaded on the build's page below"),
-                       "Netchex QC % Pass": st.column_config.ProgressColumn(
-                           "Netchex QC % Pass", format="percent", min_value=0, max_value=1,
-                           help="From the latest Netchex QC report uploaded on the build's page below (N/A rows left out)"),
-                       "Build Completed": st.column_config.DateColumn("Build Completed", format="MM/DD/YYYY"),
-                       "QC Completed": st.column_config.DateColumn("QC Completed", format="MM/DD/YYYY"),
-                       "Due Date": st.column_config.DateColumn("Due Date", format="MM/DD/YYYY")})
-    # Clicking any cell (e.g. the company name) or the tick box at the left of a row opens that build.
-    picked = event.selection.rows or [c[0] for c in event.selection.cells]
-    if picked:
-        st.session_state[pick_key] = int(table.at[picked[0], "id"])
+
+    def show_table(subset, key):
+        """A read-only builds table; clicking a row (or any cell in it) opens that build's checklist below."""
+        table = _builds_table(subset).reset_index(drop=True)
+
+        def on_pick():
+            sel = st.session_state[key].selection
+            picked = sel.rows or [c[0] for c in sel.cells]
+            if picked:
+                st.session_state[pick_key] = int(table.at[picked[0], "id"])
+
+        shown = table.copy()
+        for col in ("Status", "QC Status", "UA Status", "Balance Status"):
+            shown[col] = shown[col].map(lambda s: STATUS_LABEL.get(s, s) if s else "")
+        shown.insert(shown.columns.get_loc("QC Status") + 1, "Checklist Uploaded",
+                     shown["id"].map(lambda i: int(i) in uploaded_ids))
+        if all_qc is not None:
+            after = "Checklist Uploaded"
+            for kind in ("sf", "netchex"):
+                latest_k = all_qc[all_qc.report_type == kind].drop_duplicates("build_id", keep="first")
+                pct = {int(r.build_id): float(r.pct_pass) / 100 for r in latest_k.itertuples() if pd.notna(r.build_id)}
+                col = f"{QC_KINDS[kind]['label']} % Pass"
+                shown.insert(shown.columns.get_loc(after) + 1, col, shown["id"].map(lambda i: pct.get(int(i))))
+                after = col
+        st.dataframe(
+            shown, key=key, hide_index=True, width="stretch", on_select=on_pick,
+            selection_mode=["single-row", "single-cell"], height=min(35 * len(shown) + 40, 400),
+            column_config={"id": None,
+                           "Company Name": st.column_config.TextColumn("Company Name", pinned=True),
+                           "Checklist Uploaded": st.column_config.CheckboxColumn(
+                               "Checklist Uploaded", help="Ticked on the build's checklist below once it's uploaded"),
+                           "SF QC % Pass": st.column_config.ProgressColumn(
+                               "SF QC % Pass", format="percent", min_value=0, max_value=1,
+                               help="From the latest SF QC report uploaded on the build's page below"),
+                           "Netchex QC % Pass": st.column_config.ProgressColumn(
+                               "Netchex QC % Pass", format="percent", min_value=0, max_value=1,
+                               help="From the latest Netchex QC report uploaded on the build's page below "
+                                    "(N/A rows left out)"),
+                           "Build Completed": st.column_config.DateColumn("Build Completed", format="MM/DD/YYYY"),
+                           "QC Completed": st.column_config.DateColumn("QC Completed", format="MM/DD/YYYY"),
+                           "Due Date": st.column_config.DateColumn("Due Date", format="MM/DD/YYYY")})
+
+    st.markdown(f"**{who}'s builds ({len(own)})** · click a row to open its checklist")
+    show_table(own, f"chk_table_{who}")
+
     build_id = st.session_state.get(pick_key)
     if build_id not in labels:
-        build_id = list(labels)[-1]       # nothing clicked yet: the most recently added build
+        build_id = list(labels)[-1]       # nothing clicked yet: their most recently added build
     b = builds[builds.id == build_id].iloc[0]
     saved = {r.item_id: r for r in checks[checks.build_id == build_id].itertuples()}
     st.markdown(f"#### ✅ Checklist · {labels[build_id]}")
