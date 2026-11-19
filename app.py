@@ -2704,10 +2704,17 @@ def _qc_upload_box(builds, key, build=None, kind="sf"):
     """Upload widget. With `build`, the file is attached to that build; otherwise the build is matched by the
     company code in the file's title (e.g. 'Abilene Country Club (1M7)') or picked from a list."""
     k = QC_KINDS[kind]
+    # Who's uploading is picked first, so the report saves by itself the moment a file is dropped in.
+    default_who = "Fiza" if "Fiza" in TEAM_MEMBERS else TEAM_MEMBERS[0]
+    if build is not None:
+        qc_text = _clean_text(build.qc_by) or ""
+        default_who = next((m for m in TEAM_MEMBERS if m in qc_text), default_who)
+    who = st.selectbox("Uploaded by", TEAM_MEMBERS, key=f"{key}_who", index=TEAM_MEMBERS.index(default_who))
     # The upload box gets a fresh key after each save, so it empties once the report is saved.
     n = st.session_state.get(f"{key}_n", 0)
     up = st.file_uploader(f"Upload the {k['label']} workbook (.xlsx)", type=["xlsx"], key=f"{key}_file_{n}",
-                          help=f"The {k['file']} file from the QC. Its score is read from the file.")
+                          help=f"The {k['file']} file from the QC. It saves as soon as it's dropped in; "
+                               "its score is read from the file.")
     if not up:
         return
     data = up.getvalue()
@@ -2719,6 +2726,7 @@ def _qc_upload_box(builds, key, build=None, kind="sf"):
     tail = f"{c['N/A']} N/A" if kind == "netchex" else f"{c['No source']} No source"
     st.caption(f"Read from the file: **{parsed['pct_pass']:.1f}% Pass** · {c['Pass']} Pass · {c['Fail']} Fail · "
                f"{c['Needs eyes']} Needs eyes · {tail} · {parsed['total']} checks")
+    mismatch = False
     if build is None:
         code = parsed["company_code"]
         match = builds[builds.company_code == code] if code else builds.iloc[0:0]
@@ -2734,19 +2742,30 @@ def _qc_upload_box(builds, key, build=None, kind="sf"):
         build_id = int(build.id)
         code = _clean_text(build.company_code)
         if parsed["company_code"] and code and parsed["company_code"] != code.upper():
-            st.warning(f"This file is for {parsed['company_code']}, but this build's code is {code}. Check it's the right file.")
-    who = st.selectbox("Uploaded by", TEAM_MEMBERS, key=f"{key}_who",
-                       index=TEAM_MEMBERS.index("Fiza") if "Fiza" in TEAM_MEMBERS else 0)
-    if st.button(f"⬆️ Save {k['label']} report", key=f"{key}_save", type="primary", disabled=build_id is None):
-        b = builds[builds.id == build_id].iloc[0]
+            mismatch = True
+            st.warning(f"This file is for {parsed['company_code']}, but this build's code is {code}. "
+                       "It wasn't saved: check it's the right file, or save it anyway.")
+    if build_id is None:
+        return                                      # waits for the build to be picked, then saves
+    # Saves straight away, unless the file's company code doesn't match this build (then it asks first).
+    if mismatch and not st.button(f"⬆️ Save {k['label']} report anyway", key=f"{key}_save"):
+        return
+    b = builds[builds.id == build_id].iloc[0]
+    try:
+        save_qc_report(build_id, _clean_text(b.company_code) or parsed["company_code"], up.name, data, parsed, who)
+    except Exception as e:
+        hint = NX_SETUP_HINT if kind == "netchex" else QC_SETUP_HINT
+        st.error(f"The {k['label']} report could not be saved. {hint} ({e})"); return
+    st.session_state[f"{key}_n"] = n + 1      # empty the upload box
+    msg = f"✅ {k['label']} report saved for {b.company_name}: {parsed['pct_pass']:.0f}% Pass"
+    if build is not None:                     # build page: only this report box refreshes, no page fade
+        st.toast(msg)
         try:
-            save_qc_report(build_id, _clean_text(b.company_code) or parsed["company_code"], up.name, data, parsed, who)
-        except Exception as e:
-            hint = NX_SETUP_HINT if kind == "netchex" else QC_SETUP_HINT
-            st.error(f"The {k['label']} report could not be saved. {hint} ({e})"); return
-        st.session_state["_toast"] = f"✅ {k['label']} report saved for {b.company_name}: {parsed['pct_pass']:.0f}% Pass"
-        st.session_state[f"{key}_n"] = n + 1      # empty the upload box
-        st.rerun()
+            st.rerun(scope="fragment")
+        except st.errors.StreamlitAPIException:
+            pass                              # not a fragment-only run (full page run): fall through to a full rerun
+    st.session_state["_toast"] = msg
+    st.rerun()
 
 
 def _qc_download(r, key):
@@ -2758,8 +2777,10 @@ def _qc_download(r, key):
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+@st.fragment
 def _render_qc_for_build(builds, build, kind="sf"):
-    """SF QC or Netchex QC report box on a build's checklist page."""
+    """SF QC or Netchex QC report box on a build's checklist page. A fragment, so uploading a report
+    only refreshes this box instead of the whole page."""
     label = QC_KINDS[kind]["label"]
     st.space("small")
     with st.container(border=True):
