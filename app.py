@@ -1119,6 +1119,8 @@ def _builds_editor(builds, frame, key, label, month=None):
     frame = frame.sort_values("id")      # in the order they were added; new builds go at the bottom
     table = _filter_builds(_builds_table(frame), key)
     fresh = table
+    table = table.reset_index(drop=True)
+    table.insert(0, "#", range(1, len(table) + 1))     # serial number of each entry (counts the rows shown)
     st.caption("Click a cell to edit (saves automatically, keep going) · add a build in the empty last row · "
                "to delete, tick the box at the left of a row and click 🗑️")
     save_bar = st.container()           # save status and delete confirmation show here
@@ -1150,10 +1152,12 @@ def _builds_editor(builds, frame, key, label, month=None):
     keep_box = st.container(key=f"cbkeep_builds_{key}")
     edited = keep_box.data_editor(
         table, key=f"builds_editor_{tag}", hide_index=True, width="stretch", num_rows="dynamic",
-        column_order=BUILD_COLUMN_ORDER,
+        column_order=["#", *BUILD_COLUMN_ORDER],
         height=min(35 * len(table) + 75, 700),
         column_config={
             "id": None,
+            "#": st.column_config.NumberColumn("#", width=45, disabled=True, pinned=True,
+                                               help="Entry number. A new build gets its number once it's saved."),
             "Company Name": st.column_config.TextColumn("Company Name", width=220, required=True, pinned=True),
             "Company Code": st.column_config.TextColumn("Company Code", width=115,
                                                         help="Enter after you create the company"),
@@ -1608,6 +1612,17 @@ CHECKLIST_CSS = """<style>
 </style>"""
 
 
+SERIAL_COL = st.column_config.NumberColumn("#", width=45, disabled=True, pinned=True, format="%d",
+                                           help="Entry number")
+
+
+def _numbered(df):
+    """A copy of a table with a # serial number column (1, 2, 3…) in front."""
+    out = df.reset_index(drop=True)
+    out.insert(0, "#", range(1, len(out) + 1))
+    return out
+
+
 def _render_team_overview(builds, people, checks):
     """'All team members': one row per person. Click a row to open that person's page and their checklists."""
     status = builds.status.map(lambda v: _clean_text(v) or "Pending")
@@ -1624,7 +1639,7 @@ def _render_team_overview(builds, people, checks):
                      "QC'd": int(qcd.sum()),
                      "Awaiting QC": int((done & ~qcd & (qc_status != NOT_REQUIRED)).sum()),
                      "Checklist uploaded": int((mine & uploaded).sum())})
-    table = pd.DataFrame(rows)
+    table = _numbered(pd.DataFrame(rows))
 
     def open_person():
         sel = st.session_state.get("chk_team_table")
@@ -1636,6 +1651,7 @@ def _render_team_overview(builds, people, checks):
     st.dataframe(table, key="chk_team_table", hide_index=True, width="stretch", on_select=open_person,
                  selection_mode=["single-row", "single-cell"], height=35 * len(table) + 40,
                  column_config={
+                     "#": SERIAL_COL,
                      "QC'd": st.column_config.NumberColumn(help="Their builds with QC status Completed"),
                      "Awaiting QC": st.column_config.NumberColumn(help="Completed builds whose QC isn't completed yet"),
                      "Checklist uploaded": st.column_config.NumberColumn(
@@ -1712,10 +1728,11 @@ def _render_build_checklist(builds, checks):
                 col = f"{QC_KINDS[kind]['label']} % Pass"
                 shown.insert(shown.columns.get_loc(after) + 1, col, shown["id"].map(lambda i: pct.get(int(i))))
                 after = col
+        shown = _numbered(shown)
         st.dataframe(
             shown, key=key, hide_index=True, width="stretch", on_select=on_pick,
             selection_mode=["single-row", "single-cell"], height=min(35 * len(shown) + 40, 400),
-            column_config={"id": None,
+            column_config={"id": None, "#": SERIAL_COL,
                            "Company Name": st.column_config.TextColumn("Company Name", pinned=True),
                            "Checklist Uploaded": st.column_config.CheckboxColumn(
                                "Checklist Uploaded", help="Ticked on the build's checklist below once it's uploaded"),
@@ -1804,7 +1821,7 @@ def _render_build_checklist(builds, checks):
                             st.markdown(howto)
                     for link_label, url, tip in links:
                         st.link_button(link_label, url, type="tertiary", icon=":material/open_in_new:", help=tip)
-            view = df.reset_index(drop=True)
+            view = _numbered(df)
             t1, t2, _ = st.columns([1, 1, 4])
             want_all = {}
             for col, field, label in ((t1, "Built", "Tick all Built"), (t2, "QC", "Tick all QC")):
@@ -1817,9 +1834,9 @@ def _render_build_checklist(builds, checks):
                     want_all[field] = want
             ed = st.data_editor(
                 view, key=f"chk_{build_id}_{si}_{sv}", hide_index=True, width="stretch",
-                num_rows="fixed", disabled=["Area", "Item", "Note"],
-                column_order=["Area", "Item", "N/A", "Built", "Notes", "QC", "Comments", "Note"],
-                column_config={"item_id": None,
+                num_rows="fixed", disabled=["#", "Area", "Item", "Note"],
+                column_order=["#", "Area", "Item", "N/A", "Built", "Notes", "QC", "Comments", "Note"],
+                column_config={"item_id": None, "#": SERIAL_COL,
                                "Area": st.column_config.TextColumn("Area", width=200),
                                "Item": st.column_config.TextColumn("Item", width=520),
                                "Built": st.column_config.CheckboxColumn("Built", width=60),
@@ -2230,13 +2247,16 @@ def _render_raines(raines):
     by_person = raines.built_by.value_counts().rename_axis("Built By").reset_index(name="Company Codes")
     by_person = pd.concat([by_person, pd.DataFrame([{"Built By": "Grand Total", "Company Codes": len(raines)}])],
                           ignore_index=True)
-    left.dataframe(by_person, hide_index=True, width="stretch")
+    by_person = _numbered(by_person)
+    by_person["#"] = by_person["#"].where(by_person["Built By"] != "Grand Total")   # no number on the total row
+    left.dataframe(by_person, hide_index=True, width="stretch", column_config={"#": SERIAL_COL})
     with right.expander(f"All {len(raines)} Raines builds"):
         table = raines.sort_values(["completion_date", "company_name"]).rename(columns={
             "company_code": "Company Code", "company_name": "Company Name", "built_by": "Built By",
             "completion_date": "Build Completed"})[["Company Code", "Company Name", "Built By", "Build Completed"]]
-        st.dataframe(table, hide_index=True, width="stretch",
-                     column_config={"Build Completed": st.column_config.DateColumn(format="MM/DD/YYYY")})
+        st.dataframe(_numbered(table), hide_index=True, width="stretch",
+                     column_config={"#": SERIAL_COL,
+                                    "Build Completed": st.column_config.DateColumn(format="MM/DD/YYYY")})
 
 
 @st.fragment(run_every="30s")
@@ -2836,12 +2856,13 @@ def _render_qc_reports(builds):
         "Needs eyes": latest.needs_eyes_count, "No source": latest.no_source_count,
         "Checks": latest.total_checks, "Built By": latest["Built By"], "QC By": latest["QC By"],
         "Uploaded by": latest.uploaded_by, "Versions": latest.build_id.map(reports.build_id.value_counts()),
-    }).reset_index(drop=True)
+    })
+    table = _numbered(table)
     st.markdown("**Latest QC per build** · click a row to download its file")
     event = st.dataframe(
         table, key="qc_reports_table", hide_index=True, width="stretch", on_select="rerun",
         selection_mode="single-row", height=min(35 * len(table) + 40, 520),
-        column_config={"Company Name": st.column_config.TextColumn(pinned=True),
+        column_config={"#": SERIAL_COL, "Company Name": st.column_config.TextColumn(pinned=True),
                        "% Pass": st.column_config.ProgressColumn("% Pass", format="percent", min_value=0, max_value=1)})
     if event.selection.rows:
         r = latest.iloc[event.selection.rows[0]]
