@@ -175,7 +175,7 @@ def sqlite_conn():
     if "notes" not in cols:
         conn.execute("ALTER TABLE build_checks ADD COLUMN notes TEXT")
     bcols = [r[1] for r in conn.execute("PRAGMA table_info(builds)")]
-    for col in ("ua_status", "balance_status", "qc_completion_date", "build_month"):
+    for col in ("ua_status", "balance_status", "qc_completion_date", "build_month", "comments"):
         if col not in bcols:
             conn.execute(f"ALTER TABLE builds ADD COLUMN {col} TEXT")
     conn.commit()
@@ -200,10 +200,13 @@ def _fetch_all(table, cols):
 # ─────────────────────────────────────────────────────────────
 NOT_REQUIRED = "Not Required"
 BUILD_STATUSES = ["Pending", "In Progress", "Completed", NOT_REQUIRED]
+# QC Status has one more step: the SF QC is done but the Netchex QC isn't yet (counts as not QC'd).
+SF_DONE = "SF Done, Netchex Pending"
+QC_STATUSES = ["Pending", "In Progress", SF_DONE, "Completed", NOT_REQUIRED]
 WAIT_CLIENT, WAIT_INTERNAL = "Waiting on Client", "Waiting on Internal Resource"
 STATUS_LABEL = {"Pending": "⚪ Pending", "In Progress": "🟡 In Progress", "Completed": "🟢 Completed",
                 NOT_REQUIRED: "⚫ Not Required", WAIT_CLIENT: "🔵 Waiting on Client",
-                WAIT_INTERNAL: "🟠 Waiting on Internal Resource"}
+                WAIT_INTERNAL: "🟠 Waiting on Internal Resource", SF_DONE: "🟣 SF Done, Netchex Pending"}
 # Extra tracking columns: shown and editable in the tables, but NOT counted in any of the totals.
 UA_STATUSES = ["Pending", "In Progress", "Completed", NOT_REQUIRED, WAIT_CLIENT, WAIT_INTERNAL]
 BALANCE_STATUSES = ["Pending", "In Progress", "Completed", WAIT_CLIENT, WAIT_INTERNAL]
@@ -216,12 +219,15 @@ QC_DATE_COLUMN = {"enabled": True}  # turns off if the database doesn't have thi
 # (a due date, once added, decides the month instead). Not shown as a column.
 BUILD_MONTH = "build_month"
 BUILD_MONTH_COLUMN = {"enabled": True}  # turns off if the database doesn't have this column yet
+# Free-text comment on a build (last column of the Monthly Builds table).
+COMMENTS = "comments"
+COMMENTS_COLUMN = {"enabled": True}     # turns off if the database doesn't have this column yet
 # Payroll Leads who assign builds (US team). Add names here as needed.
 PAYROLL_LEADS = ["Angela", "Chelsi","Dakota", "Erin", "Gabrielle", "Jessikah", "Kristin", "Lauren", "Macy", "Tiffany"]
 
 BUILD_COLS = ["id", "company_name", "company_code", "hierarchy", "status", "completion_date",
               "due_date", "built_by", "assigned_by", "qc_by", "qc_status", "ua_status", "balance_status",
-              "qc_completion_date", "build_month"]
+              "qc_completion_date", "build_month", "comments"]
 CHECK_COLS = ["build_id", "item_id", "built", "qc", "na", "comments", "notes"]
 BUILD_FIELDS = {  # column shown in the tracker -> database field, in the order the tables show them
     "Company Name": "company_name", "Company Code": "company_code", "Hierarchy": "hierarchy",
@@ -229,13 +235,13 @@ BUILD_FIELDS = {  # column shown in the tracker -> database field, in the order 
     "UA Status": "ua_status", "Balance Status": "balance_status",   # extra tracking, not counted in totals
     "Built By": "built_by", "QC": "qc_by",                  # then who did each, in the same order
     "Assigned By": "assigned_by", "Due Date": "due_date", "Build Completed": "completion_date",
-    "QC Completed": "qc_completion_date",
+    "QC Completed": "qc_completion_date", "Comments": "comments",
 }
 DATE_COLUMNS = ("Build Completed", "QC Completed", "Due Date")
 DATE_FIELDS = ("completion_date", "qc_completion_date", "due_date")
 # Column order of the Monthly Builds table.
 BUILD_COLUMN_ORDER = ["Company Name", "Company Code", "Hierarchy", "Due Date", "Built By", "Status", "QC",
-                      "QC Status", "Assigned By", "Build Completed", "QC Completed", "UA Status", "Balance Status"]
+                      "QC Status", "Assigned By", "Build Completed", "QC Completed", "UA Status", "Balance Status", "Comments"]
 PROPER_CASE_FIELDS = ("company_name", "hierarchy", "built_by", "assigned_by", "qc_by")
 PERSON_FIELDS = ("built_by", "assigned_by", "qc_by")
 # Implementation Checklist - Direct Sales Clients (updated Nov 2026: the new checklist merged with the
@@ -595,7 +601,7 @@ def load_builds():
         # If the database is missing newer columns (Build month, QC Completed, UA/Balance), load without
         # them: they're shown blank and not saved until the column is added.
         optional = [((BUILD_MONTH,), BUILD_MONTH_COLUMN), ((QC_DATE,), QC_DATE_COLUMN),
-                    (tuple(EXTRA_STATUS), EXTRA_COLUMNS)]
+                    (tuple(EXTRA_STATUS), EXTRA_COLUMNS), ((COMMENTS,), COMMENTS_COLUMN)]
         try:
             df = pd.DataFrame(_fetch_all("builds", ",".join(BUILD_COLS)), columns=BUILD_COLS)
             for _cols, flag in optional:
@@ -621,12 +627,13 @@ def load_builds():
             conn.close()
     for col in (*DATE_FIELDS, BUILD_MONTH):
         df[col] = df[col].map(_to_date).astype(object)
-    for col in ("company_name", "company_code", "hierarchy", "status", "built_by", "assigned_by", "qc_by", "qc_status"):
+    for col in ("company_name", "company_code", "hierarchy", "status", "built_by", "assigned_by", "qc_by",
+                "qc_status", COMMENTS):
         df[col] = df[col].map(_clean_text).astype(object)
     df["company_code"] = df["company_code"].map(lambda v: v.upper() if isinstance(v, str) else None).astype(object)
     # A build (or its QC) with no status yet counts as Pending.
-    for col in ("status", "qc_status"):
-        df[col] = df[col].map(lambda v: v if v in BUILD_STATUSES else "Pending").astype(object)
+    df["status"] = df["status"].map(lambda v: v if v in BUILD_STATUSES else "Pending").astype(object)
+    df["qc_status"] = df["qc_status"].map(lambda v: v if v in QC_STATUSES else "Pending").astype(object)
     # UA / Balance: blank until someone picks one (no default, since they aren't counted anywhere).
     for col, allowed in EXTRA_STATUS.items():
         lookup = {a.lower(): a for a in allowed}
@@ -699,7 +706,8 @@ def _db_fields(fields):
     """Leave out UA/Balance and QC Completed when the database doesn't have those columns yet."""
     return {k: _db_value(v) for k, v in fields.items()
             if (EXTRA_COLUMNS["enabled"] or k not in EXTRA_STATUS) and (QC_DATE_COLUMN["enabled"] or k != QC_DATE)
-            and (BUILD_MONTH_COLUMN["enabled"] or k != BUILD_MONTH)}
+            and (BUILD_MONTH_COLUMN["enabled"] or k != BUILD_MONTH)
+            and (COMMENTS_COLUMN["enabled"] or k != COMMENTS)}
 
 
 def insert_builds(rows):
@@ -791,7 +799,7 @@ def _builds_table(frame):
             "Status": r.status, "Build Completed": r.completion_date, "QC Completed": r.qc_completion_date,
             "Due Date": r.due_date,
             "Built By": r.built_by, "Assigned By": r.assigned_by, "QC": r.qc_by, "QC Status": r.qc_status,
-            "UA Status": r.ua_status, "Balance Status": r.balance_status,
+            "UA Status": r.ua_status, "Balance Status": r.balance_status, "Comments": r.comments,
         })
     cols = ["id", *BUILD_FIELDS]
     table = pd.DataFrame(rows, columns=cols)
@@ -825,7 +833,7 @@ def _write_sheet(ws, title, headers, rows, date_cols=(), status_cols=()):
     for c in ws[3]:
         c.font = Font(bold=True)
         c.fill = PatternFill("solid", fgColor="FFE699")
-    fills = {"Completed": "C6EFCE", "In Progress": "FFEB9C"}
+    fills = {"Completed": "C6EFCE", "In Progress": "FFEB9C", SF_DONE: "E4DFEC"}
     for row in rows:
         ws.append(row)
         for col_name in status_cols:
@@ -1048,7 +1056,7 @@ def _month_frame(builds, choice):
     return builds[_build_months(builds) == choice]
 
 
-def _filter_builds(table, key):
+def _filter_builds(table, key, fields=None):
     """A row of filters above a builds table: search by name/code, and pick statuses or people.
     Empty filters show everything. Returns only the matching rows."""
     def people_in(col):
@@ -1062,6 +1070,8 @@ def _filter_builds(table, key):
             "Balance Status": f"flt_bal_{key}", "Built By": f"flt_bb_{key}",
             "QC": f"flt_qb_{key}", "Assigned By": f"flt_ab_{key}",
             "Company Name": f"flt_cn_{key}", "Company Code": f"flt_cc_{key}"}
+    if fields:                                  # a smaller set of filters, e.g. on a person's page
+        keys = {col: k for col, k in keys.items() if col in fields}
     q_key = f"flt_q_{key}"
     n_active = sum(bool(st.session_state.get(k)) for k in keys.values())
 
@@ -1075,24 +1085,15 @@ def _filter_builds(table, key):
                       label_visibility="collapsed")
     with c2.popover(f"Filters · {n_active}" if n_active else "Filters", icon=":material/filter_list:",
                     width="stretch"):
-        picks = {
-            "Status": st.multiselect("Status", BUILD_STATUSES, key=keys["Status"],
-                                     format_func=STATUS_LABEL.get, placeholder="All"),
-            "QC Status": st.multiselect("QC Status", BUILD_STATUSES, key=keys["QC Status"],
-                                        format_func=STATUS_LABEL.get, placeholder="All"),
-            "UA Status": st.multiselect("UA Status", UA_STATUSES, key=keys["UA Status"],
-                                        format_func=STATUS_LABEL.get, placeholder="All"),
-            "Balance Status": st.multiselect("Balance Status", BALANCE_STATUSES, key=keys["Balance Status"],
-                                             format_func=STATUS_LABEL.get, placeholder="All"),
-            "Built By": st.multiselect("Built By", people_in("Built By"), key=keys["Built By"], placeholder="All"),
-            "QC": st.multiselect("QC", people_in("QC"), key=keys["QC"], placeholder="All"),
-            "Assigned By": st.multiselect("Assigned By", people_in("Assigned By"), key=keys["Assigned By"],
-                                          placeholder="All"),
-            "Company Name": st.multiselect("Company Name", values_in("Company Name"), key=keys["Company Name"],
-                                           placeholder="All"),
-            "Company Code": st.multiselect("Company Code", values_in("Company Code"), key=keys["Company Code"],
-                                           placeholder="All"),
+        options = {
+            "Status": (BUILD_STATUSES, STATUS_LABEL.get), "QC Status": (QC_STATUSES, STATUS_LABEL.get),
+            "UA Status": (UA_STATUSES, STATUS_LABEL.get), "Balance Status": (BALANCE_STATUSES, STATUS_LABEL.get),
+            "Built By": (people_in("Built By"), str), "QC": (people_in("QC"), str),
+            "Assigned By": (people_in("Assigned By"), str),
+            "Company Name": (values_in("Company Name"), str), "Company Code": (values_in("Company Code"), str),
         }
+        picks = {col: st.multiselect(col, options[col][0], key=k, format_func=options[col][1], placeholder="All")
+                 for col, k in keys.items()}
     c3.button("Clear", key=f"flt_clear_{key}", on_click=clear, width="stretch",
               disabled=not (n_active or st.session_state.get(q_key)))
     keep = pd.Series(True, index=table.index)
@@ -1121,6 +1122,7 @@ def _builds_editor(builds, frame, key, label, month=None):
     fresh = table
     table = table.reset_index(drop=True)
     table.insert(0, "#", range(1, len(table) + 1))     # serial number of each entry (counts the rows shown)
+    table["QC Page"] = table["id"].map(_qc_page_url)   # opens the build's checklist on the Quality Check page
     st.caption("Click a cell to edit (saves automatically, keep going) · add a build in the empty last row · "
                "to delete, tick the box at the left of a row and click 🗑️")
     save_bar = st.container()           # save status and delete confirmation show here
@@ -1128,6 +1130,10 @@ def _builds_editor(builds, frame, key, label, month=None):
         st.warning("QC Completed dates can't be saved yet: the database has no qc_completion_date column. "
                    "In Supabase → SQL Editor, run: alter table builds add column if not exists "
                    "qc_completion_date date; notify pgrst, 'reload schema';  — then refresh this page.")
+    if USE_SUPABASE and not COMMENTS_COLUMN["enabled"]:
+        st.warning("Comments can't be saved yet: the database has no comments column. In Supabase → SQL Editor, "
+                   "run: alter table builds add column if not exists comments text; notify pgrst, 'reload schema';"
+                   "  — then refresh this page.")
 
     def with_extras(base, *cols):
         """Dropdown choices: the standard list, plus any other names already saved (e.g. older builds)."""
@@ -1152,13 +1158,17 @@ def _builds_editor(builds, frame, key, label, month=None):
     keep_box = st.container(key=f"cbkeep_builds_{key}")
     edited = keep_box.data_editor(
         table, key=f"builds_editor_{tag}", hide_index=True, width="stretch", num_rows="dynamic",
-        column_order=["#", *BUILD_COLUMN_ORDER],
+        column_order=["#", "Company Name", "QC Page", *BUILD_COLUMN_ORDER[1:]],
         height=min(35 * len(table) + 75, 700),
         column_config={
             "id": None,
             "#": st.column_config.NumberColumn("#", width=45, disabled=True, pinned=True,
                                                help="Entry number. A new build gets its number once it's saved."),
             "Company Name": st.column_config.TextColumn("Company Name", width=220, required=True, pinned=True),
+            "QC Page": st.column_config.LinkColumn(
+                "QC Page", display_text="Open ↗", width=80, disabled=True,
+                help="Opens this build's checklist and QC reports on the Quality Check page (in a new tab)"),
+            "Comments": st.column_config.TextColumn("Comments ✏️", width=260, help="Click to add a comment"),
             "Company Code": st.column_config.TextColumn("Company Code", width=115,
                                                         help="Enter after you create the company"),
             "Hierarchy": st.column_config.TextColumn("Hierarchy", width=130),
@@ -1172,7 +1182,7 @@ def _builds_editor(builds, frame, key, label, month=None):
             "Built By": st.column_config.SelectboxColumn("Built By", options=team, width=100),
             "Assigned By": st.column_config.SelectboxColumn("Assigned By", options=leads, width=105),
             "QC": st.column_config.SelectboxColumn("QC", options=team, width=100),
-            "QC Status": st.column_config.SelectboxColumn("QC Status", options=BUILD_STATUSES, width=125,
+            "QC Status": st.column_config.SelectboxColumn("QC Status", options=QC_STATUSES, width=125,
                                                           format_func=lambda s: STATUS_LABEL.get(s, s)),
             "UA Status": st.column_config.SelectboxColumn(
                 "UA Status", options=UA_STATUSES, width=150, format_func=lambda s: STATUS_LABEL.get(s, s),
@@ -1707,7 +1717,8 @@ def _render_build_checklist(builds, checks):
 
     def show_table(subset, key):
         """A read-only builds table; clicking a row (or any cell in it) opens that build's checklist below."""
-        table = _builds_table(subset).reset_index(drop=True)
+        table = _filter_builds(_builds_table(subset), f"person_{who}",
+                               fields=("Company Name", "Company Code", "Status", "QC Status"))
 
         def on_pick():
             sel = st.session_state[key].selection
@@ -1909,7 +1920,7 @@ def _render_build_checklist(builds, checks):
             "built_by": pick(n1, "Built by", team, txt(b.built_by), "chk_bb"),
             "status": pick(n2, "Status", BUILD_STATUSES, status, "chk_st"),
             "qc_by": pick(n3, "QC'd by", team, txt(b.qc_by), "chk_qb"),
-            "qc_status": pick(n4, "QC status", BUILD_STATUSES, qc_status, "chk_qs"),
+            "qc_status": pick(n4, "QC status", QC_STATUSES, qc_status, "chk_qs"),
         }
     old_fields = {"built_by": txt(b.built_by), "status": status, "qc_by": txt(b.qc_by), "qc_status": qc_status}
     field_changes = {k: (None if v == NONE else v) for k, v in new_fields.items()
@@ -2820,7 +2831,34 @@ def _render_qc_for_build(builds, build, kind="sf"):
             c[3].metric("Checks", int(r.total_checks))
             with c[4]:
                 st.caption(f"{r.file_name}\n\nUploaded by {r.uploaded_by or '—'}")
-                _qc_download(r, f"{kind}dl_build_{int(r.id)}")
+                with st.container(horizontal=True):
+                    _qc_download(r, f"{kind}dl_build_{int(r.id)}")
+                    ask_key = f"{kind}del_ask_{int(r.id)}"
+                    if st.button("🗑️ Delete", key=f"{kind}del_build_{int(r.id)}",
+                                 help=f"Remove this {label} report (file and score) from the build"):
+                        st.session_state[ask_key] = True
+            if st.session_state.get(ask_key):
+                older = len(mine) - 1
+                st.error(f"Delete this {label} report (**{r.file_name}**)? This can't be undone."
+                         + (f" The previous upload ({older} older version{'s' if older != 1 else ''} saved) "
+                            "will show again." if older else ""))
+                d1, d2, _ = st.columns([1, 1, 3])
+                yes, no = d1.button("Yes, delete", key=f"{kind}del_yes_{int(r.id)}", type="primary"), \
+                    d2.button("Cancel", key=f"{kind}del_no_{int(r.id)}")
+                if yes or no:
+                    st.session_state.pop(ask_key, None)
+                    if yes:
+                        try:
+                            delete_qc_report(r)
+                            st.toast(f"🗑️ {label} report deleted")
+                        except Exception as e:
+                            st.session_state["_qc_del_error"] = f"Could not delete the report. ({e})"
+                    try:
+                        st.rerun(scope="fragment")
+                    except st.errors.StreamlitAPIException:
+                        st.rerun()
+            if "_qc_del_error" in st.session_state:
+                st.error(st.session_state.pop("_qc_del_error"))
             st.caption("Changed some Needs eyes to Pass in the file? Upload it again: the new file and score replace this one.")
         else:
             st.caption(f"No {label} report yet for this build.")
@@ -2888,6 +2926,41 @@ MONTH_VIEWS = ("📅 Monthly Builds",)    # sections that use the sidebar Month 
 LIVE_VIEWS = ("📊 Dashboard",)          # sections that refresh themselves every 30 seconds
 
 
+def _qc_page_url(build_id):
+    """Link for a Monthly Builds row: opens that build on the Quality Check page."""
+    if build_id is None or pd.isna(build_id):
+        return None                              # a new row: no link until it's saved
+    try:
+        base = str(st.context.url or "").split("?")[0]
+    except Exception:
+        base = ""
+    return f"{base}?open_build={int(build_id)}"
+
+
+def _open_build_from_link(builds):
+    """Opened from a QC Page link: go to Quality Check, the builder's page and that build's checklist."""
+    raw = st.query_params.get("open_build")
+    if not raw:
+        return
+    del st.query_params["open_build"]
+    try:
+        row = builds[builds.id == int(raw)]
+    except ValueError:
+        return
+    if row.empty:
+        st.session_state["_flash_error"] = "That build wasn't found. It may have been deleted."
+        return
+    b = row.iloc[0]
+    st.session_state["builds_view"] = "✅ Quality Check"
+    people = _people(b.built_by)
+    if not people:
+        st.session_state["_flash_error"] = (f"{b.company_name} has no Built By yet, so it has no checklist page. "
+                                            "Add Built By in Monthly Builds first.")
+        return
+    st.session_state["chk_person"] = people[0]
+    st.session_state[f"chk_pick_{people[0]}"] = int(b.id)
+
+
 def render_builds_page():
     try:
         builds = load_builds()
@@ -2899,6 +2972,8 @@ def render_builds_page():
         with st.expander("Error details"):
             st.code(str(e))
         st.stop()
+
+    _open_build_from_link(builds)
 
     if "_flash" in st.session_state:
         st.success(st.session_state.pop("_flash"))
@@ -2954,7 +3029,8 @@ def render_builds_page():
 # App
 # ─────────────────────────────────────────────────────────────
 _sync_login_cookie()
-if not _needs_passcode() and st.session_state.get("started"):
+if not _needs_passcode() and (st.session_state.get("started") or "open_build" in st.query_params):
+    st.session_state["started"] = True         # a QC Page link skips the welcome page
     render_builds_page()
 else:
     render_landing_page()
