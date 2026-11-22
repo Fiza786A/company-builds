@@ -1122,7 +1122,9 @@ def _builds_editor(builds, frame, key, label, month=None):
     fresh = table
     table = table.reset_index(drop=True)
     table.insert(0, "#", range(1, len(table) + 1))     # serial number of each entry (counts the rows shown)
-    table["QC Page"] = table["id"].map(_qc_page_url)   # opens the build's checklist on the Quality Check page
+    # Clicking a company name opens that build on the Quality Check page (see _name_click_listener).
+    st.session_state["cb_name_ids"] = {str(n): int(i) for n, i in zip(table["Company Name"], table["id"])
+                                       if isinstance(n, str) and pd.notna(i)}
     st.caption("Click a cell to edit (saves automatically, keep going) · add a build in the empty last row · "
                "to delete, tick the box at the left of a row and click 🗑️")
     save_bar = st.container()           # save status and delete confirmation show here
@@ -1158,16 +1160,18 @@ def _builds_editor(builds, frame, key, label, month=None):
     keep_box = st.container(key=f"cbkeep_builds_{key}")
     edited = keep_box.data_editor(
         table, key=f"builds_editor_{tag}", hide_index=True, width="stretch", num_rows="dynamic",
-        column_order=["#", "Company Name", "QC Page", *BUILD_COLUMN_ORDER[1:]],
+        column_order=["#", *BUILD_COLUMN_ORDER],
         height=min(35 * len(table) + 75, 700),
         column_config={
             "id": None,
             "#": st.column_config.NumberColumn("#", width=45, disabled=True, pinned=True,
                                                help="Entry number. A new build gets its number once it's saved."),
-            "Company Name": st.column_config.TextColumn("Company Name", width=220, required=True, pinned=True),
-            "QC Page": st.column_config.LinkColumn(
-                "QC Page", display_text="Open ↗", width=80, disabled=True,
-                help="Opens this build's checklist and QC reports on the Quality Check page (in a new tab)"),
+            # Shown as a link: clicking the name opens the build's checklist. The value is still just the
+            # company name, so it's typed and edited like any other cell.
+            "Company Name": st.column_config.LinkColumn(
+                "Company Name", width=220, required=True, pinned=True,
+                help="Click a name to open its checklist and QC reports. To edit a name, click the empty "
+                     "space to the right of it, then type."),
             "Comments": st.column_config.TextColumn("Comments ✏️", width=260, help="Click to add a comment"),
             "Company Code": st.column_config.TextColumn("Company Code", width=115,
                                                         help="Enter after you create the company"),
@@ -2034,6 +2038,7 @@ def _render_month(builds, pick_month):
                     text=f"QC completed: {int(qc_done.sum())} of {qc_base} completed builds")
 
     # ── Every build in the month: edit, add or delete right here ──
+    _name_click_listener()      # outside the table's fragment, so a click reloads the whole page
     _month_builds_table(pick_month)
 
 
@@ -2399,6 +2404,53 @@ try:
     _scroll_keeper = st.components.v2.component("cb_scroll_keeper", js=_SCROLL_KEEPER_JS)
 except Exception:
     _scroll_keeper = None
+
+
+# Small invisible helper: the Company Name cells in Monthly Builds are drawn as links. Clicking one would
+# normally open a new browser tab; this catches that click and tells the app instead, which then opens
+# the build on the Quality Check page in the same tab.
+_NAME_CLICK_JS = """
+export default function(component) {
+    window.__cbNameClick = component.setTriggerValue;
+    if (window.__cbNameHooked) return;
+    window.__cbNameHooked = true;
+    const realOpen = window.open;
+    window.open = function(url, ...rest) {
+        const u = String(url ?? "");
+        // A company name, not a web address: open that build in the app.
+        if (u && !/^[a-z][a-z0-9+.-]*:/i.test(u) && !u.startsWith("//") && window.__cbNameClick) {
+            window.__cbNameClick("name", u);
+            return null;
+        }
+        return realOpen.call(window, url, ...rest);
+    };
+}
+"""
+try:
+    _name_click = st.components.v2.component("cb_name_click", js=_NAME_CLICK_JS)
+except Exception:
+    _name_click = None
+
+
+def _on_name_click():
+    res = st.session_state.get("cb_name_click")
+    name = getattr(res, "name", None) if res is not None else None
+    if name is None and isinstance(res, dict):
+        name = res.get("name")
+    build_id = st.session_state.get("cb_name_ids", {}).get(str(name or "").strip())
+    if build_id:
+        st.session_state["open_build_pending"] = build_id
+
+
+def _name_click_listener():
+    if _name_click is None:
+        return
+    try:
+        st.html("<style>.st-key-cb_name_click_box { display: none; }</style>")
+        with st.container(key="cb_name_click_box"):
+            _name_click(key="cb_name_click", data={}, on_name_change=_on_name_click)
+    except Exception:
+        pass
 
 
 def _keep_scroll_position():
@@ -2926,23 +2978,14 @@ MONTH_VIEWS = ("📅 Monthly Builds",)    # sections that use the sidebar Month 
 LIVE_VIEWS = ("📊 Dashboard",)          # sections that refresh themselves every 30 seconds
 
 
-def _qc_page_url(build_id):
-    """Link for a Monthly Builds row: opens that build on the Quality Check page."""
-    if build_id is None or pd.isna(build_id):
-        return None                              # a new row: no link until it's saved
-    try:
-        base = str(st.context.url or "").split("?")[0]
-    except Exception:
-        base = ""
-    return f"{base}?open_build={int(build_id)}"
-
-
 def _open_build_from_link(builds):
-    """Opened from a QC Page link: go to Quality Check, the builder's page and that build's checklist."""
-    raw = st.query_params.get("open_build")
+    """A company name was clicked in Monthly Builds (or the page was opened with ?open_build=<id>):
+    go to Quality Check, the builder's page and that build's checklist."""
+    raw = st.session_state.pop("open_build_pending", None) or st.query_params.get("open_build")
+    if "open_build" in st.query_params:
+        del st.query_params["open_build"]
     if not raw:
         return
-    del st.query_params["open_build"]
     try:
         row = builds[builds.id == int(raw)]
     except ValueError:
