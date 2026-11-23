@@ -223,7 +223,7 @@ BUILD_MONTH_COLUMN = {"enabled": True}  # turns off if the database doesn't have
 COMMENTS = "comments"
 COMMENTS_COLUMN = {"enabled": True}     # turns off if the database doesn't have this column yet
 # Payroll Leads who assign builds (US team). Add names here as needed.
-PAYROLL_LEADS = ["Angela", "Chelsi","Dakota", "Erin", "Gabrielle", "Jessikah", "Kristin", "Lauren", "Macy", "Tiffany"]
+PAYROLL_LEADS = ["Angela", "Bryn", "Chelsi","Dakota", "Erin", "Gabrielle", "Jessikah", "Kristin", "Lauren", "Macy", "Tiffany"]
 
 BUILD_COLS = ["id", "company_name", "company_code", "hierarchy", "status", "completion_date",
               "due_date", "built_by", "assigned_by", "qc_by", "qc_status", "ua_status", "balance_status",
